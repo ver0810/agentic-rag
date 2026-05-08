@@ -24,7 +24,9 @@ import {
   LogOut,
   LogIn,
   UserPlus,
-  Settings
+  Settings,
+  Sparkles,
+  ChevronDown
 } from 'lucide-react'
 import Login from './pages/Login'
 import Register from './pages/Register'
@@ -45,14 +47,27 @@ interface AiSettings {
   verified: boolean
 }
 
+interface ConfiguredModelOption {
+  provider: string
+  providerName: string
+  chatModel: string
+  embeddingModel: string
+  active: boolean
+  verified: boolean
+  recommended: boolean
+}
+
 function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showUserMenu, setShowUserMenu] = useState(false)
+  const [showModelMenu, setShowModelMenu] = useState(false)
+  const [modelSearchQuery, setModelSearchQuery] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
   const [aiSettings, setAiSettings] = useState<AiSettings | null>(null)
+  const [configuredModels, setConfiguredModels] = useState<ConfiguredModelOption[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
 
@@ -62,6 +77,7 @@ function ChatInterface() {
   useEffect(() => {
     if (user) {
       fetchAiSettings()
+      fetchConfiguredModels()
     }
   }, [])
 
@@ -71,6 +87,15 @@ function ChatInterface() {
       setAiSettings(response.data)
     } catch (err) {
       console.error('Failed to fetch AI settings', err)
+    }
+  }
+
+  const fetchConfiguredModels = async () => {
+    try {
+      const response = await axios.get('/user/ai-settings/options')
+      setConfiguredModels(response.data)
+    } catch (err) {
+      console.error('Failed to fetch configured AI models', err)
     }
   }
 
@@ -91,6 +116,20 @@ function ChatInterface() {
       localStorage.removeItem('userId')
       navigate('/login')
     })
+  }
+
+  const handleSwitchModel = async (option: ConfiguredModelOption) => {
+    try {
+      await axios.post('/user/ai-settings/switch', {
+        provider: option.provider,
+        chatModel: option.chatModel,
+        embeddingModel: option.embeddingModel
+      })
+      setShowModelMenu(false)
+      await Promise.all([fetchAiSettings(), fetchConfiguredModels()])
+    } catch (err) {
+      console.error('Failed to switch AI model', err)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -166,7 +205,10 @@ function ChatInterface() {
       <AddModelModal
         isOpen={showAddModal}
         onClose={() => setShowAddModal(false)}
-        onSuccess={fetchAiSettings}
+        onSuccess={() => {
+          fetchAiSettings()
+          fetchConfiguredModels()
+        }}
       />
 
       <aside
@@ -270,14 +312,101 @@ function ChatInterface() {
               </button>
             )}
 
-            <div className="ml-2 flex flex-col">
+            <div className="ml-2 flex items-center gap-3">
               <div className="font-semibold text-lg tracking-tight">Agentic RAG</div>
-              {aiSettings?.providerName && (
-                <div className="text-xs text-gray-400">
-                  {aiSettings.providerName}
-                  {aiSettings.verified ? ' connected' : ' not verified'}
-                </div>
-              )}
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    if (showModelMenu) setModelSearchQuery('')
+                    setShowModelMenu(!showModelMenu)
+                  }}
+                  className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-gray-50 rounded-lg transition-colors text-sm font-medium text-gray-400 border border-gray-200/60 shadow-sm"
+                >
+                  <Sparkles size={14} className="text-emerald-500/70" />
+                  <span className="max-w-[150px] truncate">
+                    {aiSettings ? `${aiSettings.provider}:${aiSettings.chatModel}` : 'Select Model'}
+                  </span>
+                  <ChevronDown size={12} className="text-gray-400" />
+                </button>
+
+                {showModelMenu && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-20"
+                      onClick={() => {
+                        setModelSearchQuery('')
+                        setShowModelMenu(false)
+                      }}
+                    />
+                    <div className="absolute top-full left-0 mt-1.5 w-72 bg-white border border-gray-200 rounded-xl shadow-xl py-1 z-30 animate-in fade-in slide-in-from-top-1 duration-200">
+                      <div className="px-3 py-2 border-b border-gray-50">
+                        <div className="flex items-center gap-2 px-2 py-1.5 bg-gray-50 rounded-lg">
+                          <Search size={14} className="text-gray-400" />
+                          <input
+                            type="text"
+                            placeholder="Search models..."
+                            value={modelSearchQuery}
+                            onChange={(e) => setModelSearchQuery(e.target.value)}
+                            className="w-full bg-transparent text-sm focus:outline-none placeholder:text-gray-400"
+                            autoFocus
+                          />
+                        </div>
+                      </div>
+                      <div className="px-3 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-50 mb-1">
+                        AI Models
+                      </div>
+                      <div className="max-h-72 overflow-y-auto scrollbar-hide">
+                        {configuredModels.length === 0 ? (
+                          <div className="px-4 py-3 text-sm text-gray-400">No configured models yet</div>
+                        ) : (
+                          configuredModels
+                            .filter(m => 
+                              m.chatModel.toLowerCase().includes(modelSearchQuery.toLowerCase()) || 
+                              m.provider.toLowerCase().includes(modelSearchQuery.toLowerCase())
+                            )
+                            .map((model, idx) => (
+                            <button
+                              key={`${model.provider}-${model.chatModel}-${idx}`}
+                              onClick={() => {
+                                handleSwitchModel(model)
+                                setModelSearchQuery('')
+                                setShowModelMenu(false)
+                              }}
+                              className="flex items-center justify-between w-full px-3 py-2 text-sm hover:bg-gray-50 transition-colors"
+                            >
+                              <div className="flex flex-col items-start min-w-0">
+                                <span className={`truncate w-full font-medium ${model.active ? 'text-black' : 'text-gray-600'}`}>
+                                  {model.chatModel}
+                                </span>
+                                <span className="text-[10px] text-gray-400 uppercase leading-tight">{model.provider}</span>
+                              </div>
+                              {model.active && (
+                                <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full flex-shrink-0 ml-2" />
+                              )}
+                            </button>
+                          ))
+                        )}
+                        {configuredModels.length > 0 && 
+                         configuredModels.filter(m => m.chatModel.toLowerCase().includes(modelSearchQuery.toLowerCase()) || m.provider.toLowerCase().includes(modelSearchQuery.toLowerCase())).length === 0 && (
+                          <div className="px-4 py-3 text-sm text-gray-400 text-center">No models found</div>
+                        )}
+                      </div>
+                      <div className="h-px bg-gray-100 my-1" />
+                      <button
+                        onClick={() => {
+                          setModelSearchQuery('')
+                          setShowModelMenu(false)
+                          setShowAddModal(true)
+                        }}
+                        className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
+                      >
+                        <Plus size={14} />
+                        <span>Manage Providers</span>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </header>

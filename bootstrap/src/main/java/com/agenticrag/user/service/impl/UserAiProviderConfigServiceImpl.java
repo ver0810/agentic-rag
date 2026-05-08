@@ -1,8 +1,10 @@
 package com.agenticrag.user.service.impl;
 
 import com.agenticrag.infra.ai.model.AiRuntimeOptions;
+import com.agenticrag.user.ai.dto.AiConfiguredModelOptionDTO;
 import com.agenticrag.infra.ai.service.OpenAiCompatibleModelFactory;
 import com.agenticrag.user.ai.dto.AiProviderCatalog;
+import com.agenticrag.user.ai.dto.AiModelSwitchRequest;
 import com.agenticrag.user.ai.dto.AiProviderModelDTO;
 import com.agenticrag.user.ai.dto.AiProviderOptionDTO;
 import com.agenticrag.user.ai.dto.AiSettingsDTO;
@@ -54,6 +56,36 @@ public class UserAiProviderConfigServiceImpl
             dto.setEnabled(config != null && config.getEnabled() != null && config.getEnabled() == 1);
             return dto;
         }).toList();
+    }
+
+    @Override
+    public List<AiConfiguredModelOptionDTO> listConfiguredModels(String userId) {
+        Assert.hasText(userId, "用户ID不能为空");
+        return list(new LambdaQueryWrapper<UserAiProviderConfigDao>()
+                .eq(UserAiProviderConfigDao::getUserId, userId)
+                .eq(UserAiProviderConfigDao::getVerified, 1)
+                .orderByDesc(UserAiProviderConfigDao::getEnabled)
+                .orderByDesc(UserAiProviderConfigDao::getUpdateTime))
+                .stream()
+                .flatMap(config -> {
+                    AiProviderCatalog catalog = requireProvider(config.getProvider());
+                    DiscoveredModels discoveredModels = resolveAllowedModels(config, catalog);
+                    List<AiProviderModelDTO> chatModels = discoveredModels.chatModels.isEmpty() ? catalog.getChatModels() : discoveredModels.chatModels;
+                    String activeChatModel = StringUtils.hasText(config.getChatModel()) ? config.getChatModel() : catalog.getDefaultChatModel();
+                    String activeEmbeddingModel = StringUtils.hasText(config.getEmbeddingModel()) ? config.getEmbeddingModel() : catalog.getDefaultEmbeddingModel();
+                    return chatModels.stream().map(model -> {
+                        AiConfiguredModelOptionDTO dto = new AiConfiguredModelOptionDTO();
+                        dto.setProvider(config.getProvider());
+                        dto.setProviderName(catalog.getDisplayName());
+                        dto.setChatModel(model.getModelCode());
+                        dto.setEmbeddingModel(activeEmbeddingModel);
+                        dto.setActive(config.getEnabled() != null && config.getEnabled() == 1 && model.getModelCode().equals(activeChatModel));
+                        dto.setVerified(config.getVerified() != null && config.getVerified() == 1);
+                        dto.setRecommended(Boolean.TRUE.equals(model.getRecommended()));
+                        return dto;
+                    });
+                })
+                .toList();
     }
 
     @Override
@@ -127,6 +159,30 @@ public class UserAiProviderConfigServiceImpl
             config.setEnabled(0);
             updateById(config);
         }
+    }
+
+    @Override
+    public void switchModel(String userId, AiModelSwitchRequest request) {
+        Assert.hasText(userId, "用户ID不能为空");
+        Assert.notNull(request, "请求不能为空");
+        Assert.hasText(request.getProvider(), "provider不能为空");
+
+        UserAiProviderConfigDao config = findByUserIdAndProvider(userId, request.getProvider());
+        Assert.notNull(config, "该Provider尚未配置");
+        Assert.isTrue(config.getVerified() != null && config.getVerified() == 1, "该Provider尚未验证");
+
+        AiProviderCatalog catalog = requireProvider(request.getProvider());
+        validateSelectedModels(config, catalog, request.getChatModel(), request.getEmbeddingModel());
+
+        disableOtherConfigs(userId, config.getId());
+        if (StringUtils.hasText(request.getChatModel())) {
+            config.setChatModel(request.getChatModel());
+        }
+        if (StringUtils.hasText(request.getEmbeddingModel())) {
+            config.setEmbeddingModel(request.getEmbeddingModel());
+        }
+        config.setEnabled(1);
+        updateById(config);
     }
 
     private String saveApiKey(String userId, String provider, String apiKey) {

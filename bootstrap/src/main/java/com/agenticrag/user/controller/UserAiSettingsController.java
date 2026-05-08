@@ -1,6 +1,8 @@
 package com.agenticrag.user.controller;
 
 import com.agenticrag.user.auth.CurrentUser;
+import com.agenticrag.user.ai.dto.AiConfiguredModelOptionDTO;
+import com.agenticrag.user.ai.dto.AiModelSwitchRequest;
 import com.agenticrag.user.ai.dto.AiSettingsDTO;
 import com.agenticrag.user.ai.dto.AiSettingsSaveRequest;
 import com.agenticrag.user.ai.dto.AiSettingsVerifyRequest;
@@ -12,6 +14,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import java.util.List;
 
 @RestController
 @RequestMapping("/user/ai-settings")
@@ -28,6 +31,11 @@ public class UserAiSettingsController {
         return userAiProviderConfigService.getCurrentSettings(userId);
     }
 
+    @GetMapping("/options")
+    public List<AiConfiguredModelOptionDTO> listConfiguredModels(@CurrentUser String userId) {
+        return userAiProviderConfigService.listConfiguredModels(userId);
+    }
+
     @PostMapping("/verify")
     public AiSettingsVerifyResponse verify(@CurrentUser String userId,
                                            @RequestBody AiSettingsVerifyRequest request) {
@@ -38,6 +46,12 @@ public class UserAiSettingsController {
     public void save(@CurrentUser String userId,
                      @RequestBody AiSettingsSaveRequest request) {
         userAiProviderConfigService.saveSettings(userId, request);
+    }
+
+    @PostMapping("/switch")
+    public void switchModel(@CurrentUser String userId,
+                            @RequestBody AiModelSwitchRequest request) {
+        userAiProviderConfigService.switchModel(userId, request);
     }
 
     @DeleteMapping
