@@ -1,6 +1,7 @@
 package com.agenticrag.user.service.impl;
 
-import com.agenticrag.infra.ai.model.AiRuntimeOptions;
+import com.agenticrag.infra.ai.model.AiRuntimeContext;
+import com.agenticrag.infra.ai.model.OpenAiRuntimeOptions;
 import com.agenticrag.user.ai.dto.AiConfiguredModelOptionDTO;
 import com.agenticrag.infra.ai.service.OpenAiCompatibleModelFactory;
 import com.agenticrag.user.ai.dto.AiProviderCatalog;
@@ -218,7 +219,7 @@ public class UserAiProviderConfigServiceImpl
 
         VerifyResult response = new VerifyResult();
         try {
-            AiRuntimeOptions runtimeOptions = buildRuntimeOptions(config, catalog);
+            OpenAiRuntimeOptions runtimeOptions = buildRuntimeOptions(config, catalog);
             List<OpenAiCompatibleModelFactory.AvailableModel> availableModels = modelFactory.listModels(runtimeOptions);
             DiscoveredModels discoveredModels = classifyModels(catalog, availableModels);
             LocalDateTime verifiedAt = LocalDateTime.now();
@@ -288,7 +289,7 @@ public class UserAiProviderConfigServiceImpl
     }
 
     @Override
-    public AiRuntimeOptions resolveRuntimeOptions(String userId) {
+    public AiRuntimeContext resolveRuntimeContext(String userId) {
         if (!StringUtils.hasText(userId)) {
             return null;
         }
@@ -296,7 +297,7 @@ public class UserAiProviderConfigServiceImpl
         if (config == null) {
             return null;
         }
-        return buildRuntimeOptions(config, requireProvider(config.getProvider()));
+        return new AiRuntimeContext(buildRuntimeOptions(config, requireProvider(config.getProvider())));
     }
 
     private UserAiProviderConfigDao getActiveDao(String userId) {
@@ -416,8 +417,8 @@ public class UserAiProviderConfigServiceImpl
         return catalog;
     }
 
-    private AiRuntimeOptions buildRuntimeOptions(UserAiProviderConfigDao config, AiProviderCatalog catalog) {
-        AiRuntimeOptions options = new AiRuntimeOptions();
+    private OpenAiRuntimeOptions buildRuntimeOptions(UserAiProviderConfigDao config, AiProviderCatalog catalog) {
+        OpenAiRuntimeOptions options = new OpenAiRuntimeOptions();
         options.setProvider(catalog.getProvider());
         options.setBaseUrl(catalog.getBaseUrl());
         options.setCompletionsPath(catalog.getCompletionsPath());
@@ -446,7 +447,7 @@ public class UserAiProviderConfigServiceImpl
 
     private DiscoveredModels resolveAllowedModels(UserAiProviderConfigDao config, AiProviderCatalog catalog) {
         try {
-            AiRuntimeOptions runtimeOptions = buildRuntimeOptions(config, catalog);
+            OpenAiRuntimeOptions runtimeOptions = buildRuntimeOptions(config, catalog);
             List<OpenAiCompatibleModelFactory.AvailableModel> availableModels = modelFactory.listModels(runtimeOptions);
             return classifyModels(catalog, availableModels);
         } catch (Exception ignored) {

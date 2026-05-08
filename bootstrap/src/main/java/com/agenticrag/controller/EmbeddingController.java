@@ -1,6 +1,6 @@
 package com.agenticrag.controller;
 
-import com.agenticrag.infra.ai.model.AiRuntimeOptions;
+import com.agenticrag.infra.ai.model.AiRuntimeContext;
 import com.agenticrag.infra.ai.service.AiEmbeddingService;
 import com.agenticrag.user.auth.CurrentUser;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,7 +25,7 @@ public class EmbeddingController {
     @PostMapping
     public float[] embed(@RequestParam(name = "text") String text,
                          @CurrentUser String userId) {
-        AiRuntimeOptions runtimeOptions = userAiProviderConfigService.resolveRuntimeOptions(userId);
-        return aiEmbeddingService.embed(text, runtimeOptions);
+        AiRuntimeContext context = userAiProviderConfigService.resolveRuntimeContext(userId);
+        return aiEmbeddingService.embed(text, context);
     }
 }

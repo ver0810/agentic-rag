@@ -1,6 +1,6 @@
 package com.agenticrag.user.service;
 
-import com.agenticrag.infra.ai.model.AiRuntimeOptions;
+import com.agenticrag.infra.ai.model.AiRuntimeContext;
 import com.agenticrag.user.ai.dto.AiConfiguredModelOptionDTO;
 import com.agenticrag.user.ai.dto.AiProviderOptionDTO;
 import com.agenticrag.user.ai.dto.AiModelSwitchRequest;
@@ -26,5 +26,5 @@ public interface UserAiProviderConfigService {
 
     void switchModel(String userId, AiModelSwitchRequest request);
 
-    AiRuntimeOptions resolveRuntimeOptions(String userId);
+    AiRuntimeContext resolveRuntimeContext(String userId);
 }

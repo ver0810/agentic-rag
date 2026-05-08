@@ -1,7 +1,7 @@
 package com.agenticrag.controller;
 
 import com.agenticrag.infra.ai.model.AiChatScene;
-import com.agenticrag.infra.ai.model.AiRuntimeOptions;
+import com.agenticrag.infra.ai.model.AiRuntimeContext;
 import com.agenticrag.infra.ai.service.AiChatService;
 import com.agenticrag.user.auth.CurrentUser;
 import com.agenticrag.user.service.UserAiProviderConfigService;
@@ -29,8 +29,8 @@ public class ChatController {
     public String chat(@RequestParam(name = "message") String message,
                        @RequestParam(name = "scene", required = false) String scene,
                        @CurrentUser String userId) {
-        AiRuntimeOptions runtimeOptions = userAiProviderConfigService.resolveRuntimeOptions(userId);
-        return aiChatService.call(AiChatScene.fromCode(scene), message, runtimeOptions);
+        AiRuntimeContext context = userAiProviderConfigService.resolveRuntimeContext(userId);
+        return aiChatService.call(AiChatScene.fromCode(scene), message, context);
     }
 
 
@@ -38,7 +38,7 @@ public class ChatController {
     public Flux<String> stream(@RequestParam(name = "message") String message,
                                @RequestParam(name = "scene", required = false) String scene,
                                @CurrentUser String userId) {
-        AiRuntimeOptions runtimeOptions = userAiProviderConfigService.resolveRuntimeOptions(userId);
-        return aiChatService.stream(AiChatScene.fromCode(scene), message, runtimeOptions);
+        AiRuntimeContext context = userAiProviderConfigService.resolveRuntimeContext(userId);
+        return aiChatService.stream(AiChatScene.fromCode(scene), message, context);
     }
 }
