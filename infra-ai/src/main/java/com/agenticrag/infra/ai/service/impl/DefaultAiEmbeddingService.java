@@ -1,47 +1,49 @@
 package com.agenticrag.infra.ai.service.impl;
 
-import com.agenticrag.infra.ai.model.AiRuntimeOptions;
+import com.agenticrag.infra.ai.model.AiRuntimeContext;
 import com.agenticrag.infra.ai.service.AiEmbeddingService;
-import com.agenticrag.infra.ai.service.OpenAiCompatibleModelFactory;
-import java.util.List;
+import com.agenticrag.infra.ai.service.AiProviderRouter;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
 
 @Service
 public class DefaultAiEmbeddingService implements AiEmbeddingService {
 
     private final EmbeddingModel embeddingModel;
-    private final OpenAiCompatibleModelFactory modelFactory;
+    private final AiProviderRouter providerRouter;
 
     public DefaultAiEmbeddingService(EmbeddingModel embeddingModel,
-                                     OpenAiCompatibleModelFactory modelFactory) {
+                                     AiProviderRouter providerRouter) {
         this.embeddingModel = embeddingModel;
-        this.modelFactory = modelFactory;
+        this.providerRouter = providerRouter;
     }
 
     @Override
     public float[] embed(String text) {
-        return embed(text, null);
+        return embeddingModel.embed(text);
     }
 
     @Override
-    public float[] embed(String text, AiRuntimeOptions runtimeOptions) {
-        if (runtimeOptions == null) {
-            return embeddingModel.embed(text);
-        }
-        return modelFactory.createEmbeddingModel(runtimeOptions).embed(text);
+    public float[] embed(String text, AiRuntimeContext context) {
+        return selectEmbeddingModel(context).embed(text);
     }
 
     @Override
     public List<float[]> embedAll(List<String> texts) {
-        return embedAll(texts, null);
+        return embeddingModel.embed(texts);
     }
 
     @Override
-    public List<float[]> embedAll(List<String> texts, AiRuntimeOptions runtimeOptions) {
-        if (runtimeOptions == null) {
-            return embeddingModel.embed(texts);
+    public List<float[]> embedAll(List<String> texts, AiRuntimeContext context) {
+        return selectEmbeddingModel(context).embed(texts);
+    }
+
+    private EmbeddingModel selectEmbeddingModel(AiRuntimeContext context) {
+        if (context == null) {
+            return embeddingModel;
         }
-        return modelFactory.createEmbeddingModel(runtimeOptions).embed(texts);
+        return providerRouter.createEmbeddingModel(context.getOptions());
     }
 }

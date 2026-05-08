@@ -2,19 +2,13 @@ package com.agenticrag.infra.ai.service.impl;
 
 import com.agenticrag.infra.ai.config.AiChatProperties;
 import com.agenticrag.infra.ai.model.AiChatScene;
+import com.agenticrag.infra.ai.model.AiRuntimeContext;
 import com.agenticrag.infra.ai.model.AiRuntimeOptions;
 import com.agenticrag.infra.ai.service.AiChatService;
-import com.agenticrag.infra.ai.service.OpenAiCompatibleModelFactory;
-import java.util.ArrayList;
-import java.util.List;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.SystemMessage;
-import org.springframework.ai.chat.messages.UserMessage;
+import com.agenticrag.infra.ai.service.AiProviderRouter;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.ChatOptions;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -24,53 +18,71 @@ public class DefaultAiChatService implements AiChatService {
 
     private final ChatModel chatModel;
     private final AiChatProperties properties;
-    private final OpenAiCompatibleModelFactory modelFactory;
+    private final AiProviderRouter providerRouter;
 
     public DefaultAiChatService(ChatModel chatModel,
                                 AiChatProperties properties,
-                                OpenAiCompatibleModelFactory modelFactory) {
+                                AiProviderRouter providerRouter) {
         this.chatModel = chatModel;
         this.properties = properties;
-        this.modelFactory = modelFactory;
+        this.providerRouter = providerRouter;
     }
 
     @Override
-    public String call(AiChatScene scene, String message, AiRuntimeOptions runtimeOptions) {
-        ChatModel selectedModel = selectChatModel(runtimeOptions, scene);
-        ChatResponse response = selectedModel.call(buildPrompt(scene, message, runtimeOptions));
-        if (response == null || response.getResult() == null || response.getResult().getOutput() == null) {
-            return "";
+    public String call(AiChatScene scene, String message, AiRuntimeContext context) {
+        String enhancedMessage = applyPreEnhancements(message, context);
+        ChatClient chatClient = buildChatClient(scene, context);
+        String result = chatClient.prompt()
+                .user(enhancedMessage)
+                .call()
+                .content();
+        return applyPostEnhancements(result, context);
+    }
+
+    @Override
+    public Flux<String> stream(AiChatScene scene, String message, AiRuntimeContext context) {
+        String enhancedMessage = applyPreEnhancements(message, context);
+        ChatClient chatClient = buildChatClient(scene, context);
+        return chatClient.prompt()
+                .user(enhancedMessage)
+                .stream()
+                .content();
+    }
+
+    private String applyPreEnhancements(String message, AiRuntimeContext context) {
+        if (context != null && context.getEnhancement().getProjectContext() != null) {
+            return "Project Context: " + context.getEnhancement().getProjectContext() + "\n\nUser Message: " + message;
         }
-        return response.getResult().getOutput().getText();
+        return message;
     }
 
-    @Override
-    public Flux<String> stream(AiChatScene scene, String message, AiRuntimeOptions runtimeOptions) {
-        ChatModel selectedModel = selectChatModel(runtimeOptions, scene);
-        return selectedModel.stream(buildPrompt(scene, message, runtimeOptions))
-                .map(this::extractText)
-                .filter(text -> text != null && !text.isEmpty());
+    private String applyPostEnhancements(String result, AiRuntimeContext context) {
+        // TODO: Implement post-processing like Guardian AI audit if enabled
+        return result;
     }
 
-    private Prompt buildPrompt(AiChatScene scene, String message, AiRuntimeOptions runtimeOptions) {
+    private ChatClient buildChatClient(AiChatScene scene, AiRuntimeContext context) {
+        ChatModel selectedModel = selectChatModel(context, scene);
         AiChatProperties.SceneOptions sceneOptions = properties.getScenes().get(resolveSceneCode(scene));
-        ChatOptions options = buildOptions(sceneOptions, runtimeOptions);
-        List<Message> messages = new ArrayList<>();
+        
+        ChatClient.Builder builder = ChatClient.builder(selectedModel)
+                .defaultOptions(buildOptions(sceneOptions, context));
+
         if (sceneOptions != null && hasText(sceneOptions.getSystemPrompt())) {
-            messages.add(new SystemMessage(sceneOptions.getSystemPrompt()));
+            builder.defaultSystem(sceneOptions.getSystemPrompt());
         }
-        messages.add(new UserMessage(message));
-        return new Prompt(messages, options);
+
+        return builder.build();
     }
 
-    private ChatOptions buildOptions(AiChatProperties.SceneOptions sceneOptions, AiRuntimeOptions runtimeOptions) {
+    private ChatOptions buildOptions(AiChatProperties.SceneOptions sceneOptions, AiRuntimeContext context) {
         ChatOptions defaultOptions = chatModel.getDefaultOptions();
         OpenAiChatOptions options = defaultOptions instanceof OpenAiChatOptions openAiChatOptions
                 ? OpenAiChatOptions.fromOptions(openAiChatOptions)
                 : OpenAiChatOptions.builder().build();
 
-        if (runtimeOptions != null && hasText(runtimeOptions.getChatModel())) {
-            options.setModel(runtimeOptions.getChatModel());
+        if (context != null && hasText(context.getOptions().getChatModel())) {
+            options.setModel(context.getOptions().getChatModel());
         }
         if (sceneOptions == null) {
             options.setStreamUsage(false);
@@ -89,18 +101,15 @@ public class DefaultAiChatService implements AiChatService {
         return options;
     }
 
-    private ChatModel selectChatModel(AiRuntimeOptions runtimeOptions, AiChatScene scene) {
-        if (runtimeOptions == null) {
+    private ChatModel selectChatModel(AiRuntimeContext context, AiChatScene scene) {
+        if (context == null) {
             return chatModel;
         }
-        OpenAiChatOptions options = (OpenAiChatOptions) buildOptions(
+        ChatOptions options = buildOptions(
                 properties.getScenes().get(resolveSceneCode(scene)),
-                runtimeOptions
+                context
         );
-        if (chatModel instanceof OpenAiChatModel) {
-            return modelFactory.createChatModel(runtimeOptions, options);
-        }
-        return chatModel;
+        return providerRouter.createChatModel(context.getOptions(), options);
     }
 
     private String resolveSceneCode(AiChatScene scene) {
@@ -108,13 +117,6 @@ public class DefaultAiChatService implements AiChatService {
             return scene.code();
         }
         return properties.getDefaultScene();
-    }
-
-    private String extractText(ChatResponse response) {
-        if (response == null || response.getResult() == null || response.getResult().getOutput() == null) {
-            return "";
-        }
-        return response.getResult().getOutput().getText();
     }
 
     private boolean hasText(String value) {
