@@ -24,6 +24,13 @@ agenticrag:
       access-expire-seconds: ${JWT_ACCESS_EXPIRE_SECONDS:7200}
       refresh-expire-seconds: ${JWT_REFRESH_EXPIRE_SECONDS:604800}
   ai:
+    default-provider: openai
+    providers:
+      openai:
+        base-url: ${OPENAI_BASE_URL:${BASE_URL}}
+        api-key: ${OPENAI_API_KEY:${API_KEY}}
+        chat-model: ${OPENAI_CHAT_MODEL:deepseek-v4-flash}
+        embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
     chat:
       default-scene: general
       scenes:
