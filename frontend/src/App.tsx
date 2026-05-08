@@ -145,10 +145,14 @@ function ChatInterface() {
     setMessages(prev => [...prev, assistantMessage])
 
     try {
-      const response = await fetch('/chat/stream?message=' + encodeURIComponent(input), {
+      const url = new URL('/chat/stream', window.location.origin)
+      url.searchParams.append('message', input)
+
+      const response = await fetch(url.toString(), {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${localStorage.getItem('token') || ''}`
+          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`,
+          'X-User-Id': user?.id || ''
         }
       })
 
@@ -161,7 +165,10 @@ function ChatInterface() {
         throw new Error('Unauthorized')
       }
 
-      if (!response.ok) throw new Error('Failed to fetch')
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '')
+        throw new Error(`Failed to fetch (${response.status}): ${errorText}`)
+      }
 
       const reader = response.body?.getReader()
       if (!reader) throw new Error('No reader')
@@ -185,13 +192,13 @@ function ChatInterface() {
           return newMessages
         })
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error:', error)
       setMessages(prev => {
         const newMessages = [...prev]
         newMessages[newMessages.length - 1] = {
           ...newMessages[newMessages.length - 1],
-          content: 'Error: Failed to get response.'
+          content: error.message || 'Error: Failed to get response.'
         }
         return newMessages
       })
