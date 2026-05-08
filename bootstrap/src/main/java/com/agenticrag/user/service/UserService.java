@@ -16,7 +16,11 @@ public interface UserService extends IService<UserDao> {
     /**
      * 用户登录
      */
-    UserDTO login(UserLoginRequest request);
+    LoginResponse login(UserLoginRequest request);
+
+    LoginResponse refreshToken(String refreshToken);
+
+    void logout(String accessToken, String refreshToken);
 
     /**
      * 修改密码

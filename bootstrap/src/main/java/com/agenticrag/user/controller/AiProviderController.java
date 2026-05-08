@@ -1,10 +1,10 @@
 package com.agenticrag.user.controller;
 
+import com.agenticrag.user.auth.CurrentUser;
 import com.agenticrag.user.ai.dto.AiProviderOptionDTO;
 import com.agenticrag.user.service.UserAiProviderConfigService;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -19,7 +19,7 @@ public class AiProviderController {
     }
 
     @GetMapping
-    public List<AiProviderOptionDTO> listProviders(@RequestHeader("X-User-Id") String userId) {
+    public List<AiProviderOptionDTO> listProviders(@CurrentUser String userId) {
         return userAiProviderConfigService.listProviderOptions(userId);
     }
 }

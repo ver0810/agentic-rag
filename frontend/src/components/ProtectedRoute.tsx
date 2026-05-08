@@ -7,8 +7,10 @@ interface ProtectedRouteProps {
 
 const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   const user = localStorage.getItem('user');
+  const token = localStorage.getItem('token');
+  const refreshToken = localStorage.getItem('refreshToken');
   
-  if (!user) {
+  if (!user || !token || !refreshToken) {
     return <Navigate to="/login" replace />;
   }
 

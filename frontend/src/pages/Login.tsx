@@ -17,9 +17,9 @@ const Login: React.FC = () => {
 
     try {
       const response = await axios.post('/user/login', { username, password });
-      // Assuming the response contains user info and we might need to store it
-      localStorage.setItem('user', JSON.stringify(response.data));
-      localStorage.setItem('userId', response.data.id);
+      localStorage.setItem('token', response.data.accessToken);
+      localStorage.setItem('refreshToken', response.data.refreshToken);
+      localStorage.setItem('user', JSON.stringify(response.data.user));
       navigate('/');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Login failed. Please check your credentials.');

@@ -30,11 +30,8 @@ public class AiChatProperties {
     public static class SceneOptions {
 
         private String model;
-
         private Double temperature;
-
         private Integer maxTokens;
-
         private String systemPrompt;
 
         public String getModel() {

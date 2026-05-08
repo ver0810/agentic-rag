@@ -35,11 +35,6 @@ public class DefaultAiChatService implements AiChatService {
     }
 
     @Override
-    public String call(AiChatScene scene, String message) {
-        return call(scene, message, null);
-    }
-
-    @Override
     public String call(AiChatScene scene, String message, AiRuntimeOptions runtimeOptions) {
         ChatModel selectedModel = selectChatModel(runtimeOptions, scene);
         ChatResponse response = selectedModel.call(buildPrompt(scene, message, runtimeOptions));
@@ -47,11 +42,6 @@ public class DefaultAiChatService implements AiChatService {
             return "";
         }
         return response.getResult().getOutput().getText();
-    }
-
-    @Override
-    public Flux<String> stream(AiChatScene scene, String message) {
-        return stream(scene, message, null);
     }
 
     @Override

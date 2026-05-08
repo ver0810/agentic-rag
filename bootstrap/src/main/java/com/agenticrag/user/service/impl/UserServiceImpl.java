@@ -3,18 +3,35 @@ package com.agenticrag.user.service.impl;
 import com.agenticrag.user.dao.entity.UserDao;
 import com.agenticrag.user.dao.mapper.UserMapper;
 import com.agenticrag.user.dto.*;
+import com.agenticrag.user.auth.AuthenticatedUser;
+import com.agenticrag.user.auth.JwtTokenService;
+import com.agenticrag.user.auth.TokenBlacklistService;
 import com.agenticrag.user.service.UserService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import java.time.Instant;
 import org.springframework.stereotype.Service;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.List;
 import java.util.stream.Collectors;
 
 @Service
 public class UserServiceImpl extends ServiceImpl<UserMapper, UserDao> implements UserService {
+
+    private final JwtTokenService jwtTokenService;
+    private final PasswordEncoder passwordEncoder;
+    private final TokenBlacklistService tokenBlacklistService;
+
+    public UserServiceImpl(JwtTokenService jwtTokenService,
+                           PasswordEncoder passwordEncoder,
+                           TokenBlacklistService tokenBlacklistService) {
+        this.jwtTokenService = jwtTokenService;
+        this.passwordEncoder = passwordEncoder;
+        this.tokenBlacklistService = tokenBlacklistService;
+    }
 
     @Override
     public String register(UserRegisterRequest request) {
@@ -27,8 +44,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDao> implements
 
         UserDao userDao = new UserDao();
         userDao.setUsername(request.getUsername());
-        // 简单实现，暂不考虑加密，实际建议使用 BCrypt
-        userDao.setPassword(request.getPassword());
+        userDao.setPassword(passwordEncoder.encode(request.getPassword()));
         userDao.setAvatar(request.getAvatar());
         userDao.setRole(StringUtils.hasText(request.getRole()) ? request.getRole() : "user");
 
@@ -37,17 +53,51 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDao> implements
     }
 
     @Override
-    public UserDTO login(UserLoginRequest request) {
+    public LoginResponse login(UserLoginRequest request) {
         Assert.hasText(request.getUsername(), "用户名不能为空");
         Assert.hasText(request.getPassword(), "密码不能为空");
 
         UserDao userDao = getOne(new LambdaQueryWrapper<UserDao>()
-                .eq(UserDao::getUsername, request.getUsername())
-                .eq(UserDao::getPassword, request.getPassword()));
-
+                .eq(UserDao::getUsername, request.getUsername()));
         Assert.notNull(userDao, "用户名或密码错误");
+        Assert.isTrue(matchesPassword(request.getPassword(), userDao.getPassword()), "用户名或密码错误");
 
-        return convertToDTO(userDao);
+        if (needsPasswordUpgrade(userDao.getPassword())) {
+            userDao.setPassword(passwordEncoder.encode(request.getPassword()));
+            updateById(userDao);
+        }
+
+        UserDTO user = convertToDTO(userDao);
+        JwtTokenService.TokenPair tokenPair = jwtTokenService.generateTokenPair(user.getId(), user.getUsername(), user.getRole());
+        LoginResponse response = new LoginResponse();
+        response.setUser(user);
+        response.setAccessToken(tokenPair.getAccessToken());
+        response.setRefreshToken(tokenPair.getRefreshToken());
+        return response;
+    }
+
+    @Override
+    public LoginResponse refreshToken(String refreshToken) {
+        Assert.hasText(refreshToken, "refreshToken不能为空");
+        Assert.isTrue(!tokenBlacklistService.isBlacklisted(refreshToken), "refreshToken已失效，请重新登录");
+
+        AuthenticatedUser user = jwtTokenService.parseRefreshToken(refreshToken);
+        UserDao userDao = getById(user.getUserId());
+        Assert.notNull(userDao, "用户不存在");
+
+        tokenBlacklistService.blacklist(refreshToken, jwtTokenService.getExpiration(refreshToken));
+        JwtTokenService.TokenPair tokenPair = jwtTokenService.generateTokenPair(userDao.getId(), userDao.getUsername(), userDao.getRole());
+        LoginResponse response = new LoginResponse();
+        response.setUser(convertToDTO(userDao));
+        response.setAccessToken(tokenPair.getAccessToken());
+        response.setRefreshToken(tokenPair.getRefreshToken());
+        return response;
+    }
+
+    @Override
+    public void logout(String accessToken, String refreshToken) {
+        blacklistIfPresent(accessToken);
+        blacklistIfPresent(refreshToken);
     }
 
     @Override
@@ -57,9 +107,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDao> implements
 
         UserDao userDao = getById(userId);
         Assert.notNull(userDao, "用户不存在");
-        Assert.isTrue(userDao.getPassword().equals(request.getOldPassword()), "原密码错误");
+        Assert.isTrue(matchesPassword(request.getOldPassword(), userDao.getPassword()), "原密码错误");
 
-        userDao.setPassword(request.getNewPassword());
+        userDao.setPassword(passwordEncoder.encode(request.getNewPassword()));
         updateById(userDao);
     }
 
@@ -83,5 +133,30 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDao> implements
         dto.setRole(userDao.getRole());
         dto.setCreateTime(userDao.getCreateTime());
         return dto;
+    }
+
+    private boolean matchesPassword(String rawPassword, String storedPassword) {
+        if (!StringUtils.hasText(storedPassword)) {
+            return false;
+        }
+        if (needsPasswordUpgrade(storedPassword)) {
+            return storedPassword.equals(rawPassword);
+        }
+        return passwordEncoder.matches(rawPassword, storedPassword);
+    }
+
+    private boolean needsPasswordUpgrade(String storedPassword) {
+        return !StringUtils.hasText(storedPassword) || !storedPassword.startsWith("$2");
+    }
+
+    private void blacklistIfPresent(String token) {
+        if (!StringUtils.hasText(token)) {
+            return;
+        }
+        try {
+            Instant expiresAt = jwtTokenService.getExpiration(token);
+            tokenBlacklistService.blacklist(token, expiresAt);
+        } catch (Exception ignored) {
+        }
     }
 }

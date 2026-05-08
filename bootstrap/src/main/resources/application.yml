@@ -18,6 +18,11 @@ spring:
           stream-usage: false
 
 agenticrag:
+  auth:
+    jwt:
+      secret: ${JWT_SECRET:change-this-jwt-secret-to-a-long-random-value-1234567890}
+      access-expire-seconds: ${JWT_ACCESS_EXPIRE_SECONDS:7200}
+      refresh-expire-seconds: ${JWT_REFRESH_EXPIRE_SECONDS:604800}
   ai:
     chat:
       default-scene: general

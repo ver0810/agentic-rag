@@ -1,5 +1,6 @@
 package com.agenticrag.user.controller;
 
+import com.agenticrag.user.auth.CurrentUser;
 import com.agenticrag.user.ai.dto.AiSettingsDTO;
 import com.agenticrag.user.ai.dto.AiSettingsSaveRequest;
 import com.agenticrag.user.ai.dto.AiSettingsVerifyRequest;
@@ -9,7 +10,6 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -24,24 +24,24 @@ public class UserAiSettingsController {
     }
 
     @GetMapping
-    public AiSettingsDTO getSettings(@RequestHeader("X-User-Id") String userId) {
+    public AiSettingsDTO getSettings(@CurrentUser String userId) {
         return userAiProviderConfigService.getCurrentSettings(userId);
     }
 
     @PostMapping("/verify")
-    public AiSettingsVerifyResponse verify(@RequestHeader("X-User-Id") String userId,
+    public AiSettingsVerifyResponse verify(@CurrentUser String userId,
                                            @RequestBody AiSettingsVerifyRequest request) {
         return userAiProviderConfigService.verifySettings(userId, request);
     }
 
     @PostMapping("/save")
-    public void save(@RequestHeader("X-User-Id") String userId,
+    public void save(@CurrentUser String userId,
                      @RequestBody AiSettingsSaveRequest request) {
         userAiProviderConfigService.saveSettings(userId, request);
     }
 
     @DeleteMapping
-    public void clear(@RequestHeader("X-User-Id") String userId) {
+    public void clear(@CurrentUser String userId) {
         userAiProviderConfigService.clearSettings(userId);
     }
 }

@@ -57,9 +57,6 @@ const AddModelModal: React.FC<AddModelModalProps> = ({ isOpen, onClose, onSucces
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const userStr = localStorage.getItem('user')
-  const user = userStr ? JSON.parse(userStr) : null
-
   useEffect(() => {
     if (isOpen) {
       void initialize()
@@ -84,12 +81,8 @@ const AddModelModal: React.FC<AddModelModalProps> = ({ isOpen, onClose, onSucces
   const fetchProviders = async () => {
     try {
       const [providersResponse, settingsResponse] = await Promise.all([
-        axios.get('/ai/providers', {
-          headers: { 'X-User-Id': user?.id }
-        }),
-        axios.get('/user/ai-settings', {
-          headers: { 'X-User-Id': user?.id }
-        })
+        axios.get('/ai/providers'),
+        axios.get('/user/ai-settings')
       ])
       const providerList: AiProviderOption[] = providersResponse.data
       const settings: AiSettingsResponse = settingsResponse.data
@@ -115,8 +108,6 @@ const AddModelModal: React.FC<AddModelModalProps> = ({ isOpen, onClose, onSucces
       const response = await axios.post('/user/ai-settings/verify', {
         provider: selectedProvider,
         apiKey
-      }, {
-        headers: { 'X-User-Id': user?.id }
       })
       setVerifyResult({ success: response.data.success, message: response.data.message })
       if (response.data.success) {
@@ -147,9 +138,7 @@ const AddModelModal: React.FC<AddModelModalProps> = ({ isOpen, onClose, onSucces
       if (apiKey.trim()) {
         payload.apiKey = apiKey.trim()
       }
-      await axios.post('/user/ai-settings/save', payload, {
-        headers: { 'X-User-Id': user?.id }
-      })
+      await axios.post('/user/ai-settings/save', payload)
       onSuccess()
       onClose()
     } catch (err: any) {

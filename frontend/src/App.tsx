@@ -67,9 +67,7 @@ function ChatInterface() {
 
   const fetchAiSettings = async () => {
     try {
-      const response = await axios.get('/user/ai-settings', {
-        headers: { 'X-User-Id': user.id }
-      })
+      const response = await axios.get('/user/ai-settings')
       setAiSettings(response.data)
     } catch (err) {
       console.error('Failed to fetch AI settings', err)
@@ -85,9 +83,14 @@ function ChatInterface() {
   }, [messages])
 
   const handleLogout = () => {
-    localStorage.removeItem('user')
-    localStorage.removeItem('userId')
-    navigate('/login')
+    const refreshToken = localStorage.getItem('refreshToken')
+    axios.post('/user/logout', { refreshToken }).catch(() => undefined).finally(() => {
+      localStorage.removeItem('token')
+      localStorage.removeItem('refreshToken')
+      localStorage.removeItem('user')
+      localStorage.removeItem('userId')
+      navigate('/login')
+    })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -106,9 +109,18 @@ function ChatInterface() {
       const response = await fetch('/chat/stream?message=' + encodeURIComponent(input), {
         method: 'POST',
         headers: {
-          'X-User-Id': user?.id || ''
+          Authorization: `Bearer ${localStorage.getItem('token') || ''}`
         }
       })
+
+      if (response.status === 401) {
+        localStorage.removeItem('token')
+        localStorage.removeItem('refreshToken')
+        localStorage.removeItem('user')
+        localStorage.removeItem('userId')
+        navigate('/login')
+        throw new Error('Unauthorized')
+      }
 
       if (!response.ok) throw new Error('Failed to fetch')
 
