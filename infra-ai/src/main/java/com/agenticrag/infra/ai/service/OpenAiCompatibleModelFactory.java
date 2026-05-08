@@ -1,6 +1,7 @@
 package com.agenticrag.infra.ai.service;
 
 import com.agenticrag.infra.ai.model.AiRuntimeOptions;
+import com.agenticrag.infra.ai.model.OpenAiRuntimeOptions;
 import io.micrometer.observation.ObservationRegistry;
 import org.springframework.ai.document.MetadataMode;
 import org.springframework.ai.openai.OpenAiChatModel;
@@ -47,18 +48,19 @@ public class OpenAiCompatibleModelFactory {
 
     public OpenAiChatModel createChatModel(AiRuntimeOptions runtimeOptions, OpenAiChatOptions options) {
         return defaultChatModel.mutate()
-                .openAiApi(buildOpenAiApi(runtimeOptions))
+                .openAiApi(buildOpenAiApi(cast(runtimeOptions)))
                 .defaultOptions(options)
                 .build();
     }
 
     public OpenAiEmbeddingModel createEmbeddingModel(AiRuntimeOptions runtimeOptions) {
+        OpenAiRuntimeOptions openAiOptions = cast(runtimeOptions);
         OpenAiEmbeddingOptions options = new OpenAiEmbeddingOptions();
-        if (runtimeOptions.getEmbeddingModel() != null && !runtimeOptions.getEmbeddingModel().isBlank()) {
-            options.setModel(runtimeOptions.getEmbeddingModel());
+        if (openAiOptions.getEmbeddingModel() != null && !openAiOptions.getEmbeddingModel().isBlank()) {
+            options.setModel(openAiOptions.getEmbeddingModel());
         }
         return new OpenAiEmbeddingModel(
-                buildOpenAiApi(runtimeOptions),
+                buildOpenAiApi(openAiOptions),
                 MetadataMode.EMBED,
                 options,
                 retryTemplate,
@@ -67,18 +69,19 @@ public class OpenAiCompatibleModelFactory {
     }
 
     public OpenAiApi createApiClient(AiRuntimeOptions runtimeOptions) {
-        return buildOpenAiApi(runtimeOptions);
+        return buildOpenAiApi(cast(runtimeOptions));
     }
 
     public List<AvailableModel> listModels(AiRuntimeOptions runtimeOptions) {
         Assert.notNull(runtimeOptions, "AI runtime options cannot be null");
-        Assert.hasText(runtimeOptions.getBaseUrl(), "AI provider baseUrl cannot be empty");
-        Assert.hasText(runtimeOptions.getApiKey(), "AI provider apiKey cannot be empty");
+        OpenAiRuntimeOptions openAiOptions = cast(runtimeOptions);
+        Assert.hasText(openAiOptions.getBaseUrl(), "AI provider baseUrl cannot be empty");
+        Assert.hasText(openAiOptions.getApiKey(), "AI provider apiKey cannot be empty");
 
-        String modelsPath = StringUtils.hasText(runtimeOptions.getModelsPath()) ? runtimeOptions.getModelsPath() : "/v1/models";
+        String modelsPath = StringUtils.hasText(openAiOptions.getModelsPath()) ? openAiOptions.getModelsPath() : "/v1/models";
         RestClient client = restClientBuilder
-                .baseUrl(runtimeOptions.getBaseUrl())
-                .defaultHeader("Authorization", "Bearer " + runtimeOptions.getApiKey())
+                .baseUrl(openAiOptions.getBaseUrl())
+                .defaultHeader("Authorization", "Bearer " + openAiOptions.getApiKey())
                 .build();
         ModelListResponse response = client.get()
                 .uri(modelsPath)
@@ -105,7 +108,7 @@ public class OpenAiCompatibleModelFactory {
         return models;
     }
 
-    private OpenAiApi buildOpenAiApi(AiRuntimeOptions runtimeOptions) {
+    private OpenAiApi buildOpenAiApi(OpenAiRuntimeOptions runtimeOptions) {
         Assert.notNull(runtimeOptions, "AI runtime options cannot be null");
         Assert.hasText(runtimeOptions.getBaseUrl(), "AI provider baseUrl cannot be empty");
         Assert.hasText(runtimeOptions.getApiKey(), "AI provider apiKey cannot be empty");
@@ -124,6 +127,13 @@ public class OpenAiCompatibleModelFactory {
             builder.embeddingsPath(runtimeOptions.getEmbeddingsPath());
         }
         return builder.build();
+    }
+
+    private OpenAiRuntimeOptions cast(AiRuntimeOptions options) {
+        if (options instanceof OpenAiRuntimeOptions) {
+            return (OpenAiRuntimeOptions) options;
+        }
+        throw new IllegalArgumentException("OpenAiCompatibleModelFactory requires OpenAiRuntimeOptions");
     }
 
     public static class AvailableModel {
