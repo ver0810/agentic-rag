@@ -6,7 +6,7 @@ import reactor.core.publisher.Flux;
 
 public interface AiChatService {
 
-    String call(AiChatScene scene, String message, AiRuntimeContext context);
+    String call(AiChatScene scene, String message, AiRuntimeContext context, String conversationId);
 
-    Flux<String> stream(AiChatScene scene, String message, AiRuntimeContext context);
+    Flux<String> stream(AiChatScene scene, String message, AiRuntimeContext context, String conversationId);
 }

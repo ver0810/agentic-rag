@@ -26,7 +26,10 @@ import {
   UserPlus,
   Settings,
   Sparkles,
-  ChevronDown
+  ChevronDown,
+  MoreHorizontal,
+  Pencil,
+  Trash2
 } from 'lucide-react'
 import Login from './pages/Login'
 import Register from './pages/Register'
@@ -57,6 +60,11 @@ interface ConfiguredModelOption {
   recommended: boolean
 }
 
+interface Chat {
+  chatTitle: string
+  sessionId: string
+}
+
 function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -68,8 +76,13 @@ function ChatInterface() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [aiSettings, setAiSettings] = useState<AiSettings | null>(null)
   const [configuredModels, setConfiguredModels] = useState<ConfiguredModelOption[]>([])
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [recentChats, setRecentChats] = useState<Chat[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const navigate = useNavigate()
+  const [activeMenuSessionId, setActiveMenuSessionId] = useState<string | null>(null)
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState('')
+  const navigate = useNavigate();
 
   const userStr = localStorage.getItem('user')
   const user = userStr ? JSON.parse(userStr) : null
@@ -78,6 +91,7 @@ function ChatInterface() {
     if (user) {
       fetchAiSettings()
       fetchConfiguredModels()
+      fetchSessions()
     }
   }, [])
 
@@ -99,6 +113,32 @@ function ChatInterface() {
     }
   }
 
+  const fetchSessions = async () => {
+    try {
+      const response = await axios.get('/chat/sessions')
+      const chats = response.data.map((item: any) => ({
+        sessionId: item.conversationId,
+        chatTitle: item.title
+      }))
+      setRecentChats(chats)
+    } catch (err) {
+      console.error('Failed to fetch sessions', err)
+    }
+  }
+
+  const fetchMessages = async (sessionId: string) => {
+    try {
+      const response = await axios.get(`/chat/messages?conversationId=${sessionId}`)
+      const history = response.data.map((msg: any) => ({
+        role: msg.role,
+        content: msg.content
+      }))
+      setMessages(history)
+    } catch (err) {
+      console.error('Failed to fetch messages', err)
+    }
+  }
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
@@ -107,6 +147,67 @@ function ChatInterface() {
     scrollToBottom()
   }, [messages])
 
+
+  const handleCreateSession = async () => {
+    try {
+      const response = await axios.post("/chat/session/new");
+      const sessionId = response.data.sessionId;
+
+      setCurrentSessionId(sessionId);
+
+      setMessages([]);
+      setInput('');
+      fetchSessions();
+      console.log("Create a new session successful");
+    } catch (error) {
+      console.error("Failed to create new session", error);
+    }
+  }
+
+  const handleSwitchSession = (sessionId: string) => {
+    setCurrentSessionId(sessionId)
+    fetchMessages(sessionId)
+  }
+
+  const handleStartRename = (sessionId: string, currentTitle: string) => {
+    setEditingSessionId(sessionId)
+    setEditingTitle(currentTitle)
+    setActiveMenuSessionId(null)
+  }
+
+  const handleInlineRename = async (sessionId: string) => {
+    if (editingTitle.trim() && editingTitle !== recentChats.find(c => c.sessionId === sessionId)?.chatTitle) {
+      try {
+        await axios.put(`/chat/session/${sessionId}/title?title=${encodeURIComponent(editingTitle.trim())}`)
+        fetchSessions()
+      } catch (err) {
+        console.error('Failed to rename session', err)
+      }
+    }
+    setEditingSessionId(null)
+  }
+
+  const handleRenameSession = async (sessionId: string, currentTitle: string) => {
+    handleStartRename(sessionId, currentTitle)
+  }
+
+  const handleDeleteSession = async (sessionId: string) => {
+    console.log('Attempting to delete session:', sessionId);
+    if (confirm('Are you sure you want to delete this chat?')) {
+      try {
+        const response = await axios.delete(`/chat/session/${sessionId}`)
+        console.log('Delete response:', response.status);
+        if (currentSessionId === sessionId) {
+          setCurrentSessionId(null)
+          setMessages([])
+        }
+        fetchSessions()
+      } catch (err) {
+        console.error('Failed to delete session', err)
+      }
+    }
+    setActiveMenuSessionId(null)
+  }
   const handleLogout = () => {
     const refreshToken = localStorage.getItem('refreshToken')
     axios.post('/user/logout', { refreshToken }).catch(() => undefined).finally(() => {
@@ -147,6 +248,18 @@ function ChatInterface() {
     try {
       const url = new URL('/chat/stream', window.location.origin)
       url.searchParams.append('message', input)
+
+      let sessionId = currentSessionId;
+      let isNewSession = false;
+      if (!sessionId) {
+        const res = await axios.post("/chat/session/new");
+        sessionId = res.data.sessionId;
+        setCurrentSessionId(sessionId);
+        isNewSession = true;
+        fetchSessions(); // Show "New Chat" in sidebar immediately
+      }
+
+      url.searchParams.append('conversationId', sessionId);
 
       const response = await fetch(url.toString(), {
         method: 'POST',
@@ -192,6 +305,11 @@ function ChatInterface() {
           return newMessages
         })
       }
+
+      // If it was the first message of a new session, refresh sessions to get the auto-generated title
+      if (isNewSession) {
+        fetchSessions();
+      }
     } catch (error: any) {
       console.error('Error:', error)
       setMessages(prev => {
@@ -224,7 +342,9 @@ function ChatInterface() {
         } transition-all duration-300 ease-in-out flex flex-col bg-[#f9f9f9] border-r border-[#e5e5e5] overflow-hidden`}
       >
         <div className="p-3 flex flex-col h-full w-[260px]">
-          <button className="flex items-center justify-between w-full p-2 text-sm font-medium hover:bg-[#ececec] rounded-lg transition-colors group">
+          <button className="flex items-center justify-between w-full p-2 text-sm font-medium hover:bg-[#ececec] rounded-lg transition-colors group"
+          onClick={handleCreateSession}
+          >
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 bg-white border border-[#e5e5e5] rounded-full flex items-center justify-center shadow-sm">
                 <Plus size={16} />
@@ -238,7 +358,81 @@ function ChatInterface() {
             <div className="px-2 py-1 text-[11px] font-semibold text-gray-500 uppercase tracking-wider flex items-center justify-between">
               <span>Recent</span>
             </div>
-            <div className="px-3 py-2 text-sm text-gray-400 italic">No recent chats</div>
+            {recentChats.length === 0 ? (
+              <div className="px-3 py-2 text-sm text-gray-400 italic">No recent chats</div>
+            ) : (
+              recentChats.map((chat) => (
+                <div key={chat.sessionId} className="group/item relative">
+                  {editingSessionId === chat.sessionId ? (
+                    <input
+                      autoFocus
+                      className="w-full text-left px-3 py-2 text-sm rounded-lg bg-white border border-gray-300 outline-none"
+                      value={editingTitle}
+                      onChange={(e) => setEditingTitle(e.target.value)}
+                      onBlur={() => handleInlineRename(chat.sessionId)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleInlineRename(chat.sessionId)
+                        if (e.key === 'Escape') setEditingSessionId(null)
+                      }}
+                    />
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => handleSwitchSession(chat.sessionId)}
+                        className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors truncate pr-10 ${
+                          currentSessionId === chat.sessionId ? 'bg-[#ececec] font-medium' : 'hover:bg-[#ececec] text-gray-600'
+                        }`}
+                      >
+                        {chat.chatTitle}
+                      </button>
+                      
+                      <div className="absolute right-1 top-1 opacity-0 group-hover/item:opacity-100 transition-opacity">
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveMenuSessionId(activeMenuSessionId === chat.sessionId ? null : chat.sessionId);
+                          }}
+                          className="p-1.5 hover:bg-gray-200 rounded-full text-gray-500 hover:text-black transition-colors"
+                        >
+                          <MoreHorizontal size={14} />
+                        </button>
+                        
+                        {activeMenuSessionId === chat.sessionId && (
+                          <>
+                            <div 
+                              className="fixed inset-0 z-40" 
+                              onClick={() => setActiveMenuSessionId(null)} 
+                            />
+                            <div className="absolute right-0 top-full mt-1 w-32 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRenameSession(chat.sessionId, chat.chatTitle);
+                                }}
+                                className="flex items-center gap-2 w-full px-3 py-1.5 text-xs hover:bg-gray-50 text-gray-700 transition-colors"
+                              >
+                                <Pencil size={12} />
+                                <span>Rename</span>
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteSession(chat.sessionId);
+                                }}
+                                className="flex items-center gap-2 w-full px-3 py-1.5 text-xs hover:bg-red-50 text-red-600 transition-colors"
+                              >
+                                <Trash2 size={12} />
+                                <span>Delete</span>
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))
+            )}
           </div>
 
           <div className="pt-4 mt-auto border-t border-[#e5e5e5] relative">

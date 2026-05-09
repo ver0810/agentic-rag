@@ -35,7 +35,7 @@ agenticrag:
       default-scene: general
       scenes:
         general:
-          system-prompt: 你是一个准确、简洁的 AI 助手。
+          system-prompt: 你是一个智能聊天 AI 助手。
         rag_qa:
           temperature: 0.2
           system-prompt: 你是一个严格基于检索上下文回答问题的知识库助手。如果证据不足，要明确说明。

@@ -18,12 +18,14 @@ import java.util.stream.Collectors;
 public class AiProviderRouter {
 
     private final Map<String, AiModelFactory> factories;
+    private final List<AiModelFactory> factoryList;
     private final AiProviderProperties providerProperties;
     private final AiModelFactory defaultFactory;
 
     public AiProviderRouter(List<AiModelFactory> factoryList, AiProviderProperties providerProperties) {
         Assert.notEmpty(factoryList, "At least one AiModelFactory implementation is required");
         this.providerProperties = providerProperties;
+        this.factoryList = factoryList;
         this.factories = factoryList.stream()
                 .collect(Collectors.toMap(AiModelFactory::getProvider, Function.identity()));
         this.defaultFactory = factories.get(providerProperties.getDefaultProvider());
@@ -48,11 +50,21 @@ public class AiProviderRouter {
         if (provider == null || provider.isBlank()) {
             return defaultFactory;
         }
+        
+        // 1. Exact match by provider key
         AiModelFactory factory = factories.get(provider);
-        if (factory == null) {
-            throw new IllegalArgumentException("Unsupported AI provider: " + provider + 
-                ". Supported providers: " + factories.keySet());
+        if (factory != null) {
+            return factory;
         }
-        return factory;
+
+        // 2. Flexible match using supports() method
+        for (AiModelFactory f : factoryList) {
+            if (f.supports(provider)) {
+                return f;
+            }
+        }
+        
+        throw new IllegalArgumentException("Unsupported AI provider: " + provider + 
+            ". Supported providers: " + factories.keySet());
     }
 }

@@ -63,7 +63,18 @@ public class OpenAiModelFactory implements AiModelFactory {
 
     @Override
     public boolean supports(String provider) {
-        return "openai".equalsIgnoreCase(provider) || provider == null || provider.isBlank();
+        if (provider == null || provider.isBlank()) {
+            return true;
+        }
+        String lower = provider.toLowerCase();
+        return "openai".equals(lower) 
+                || "deepseek".equals(lower)
+                || "qwen".equals(lower)
+                || "moonshot".equals(lower)
+                || "zhipu".equals(lower)
+                || "siliconflow".equals(lower)
+                || "openrouter".equals(lower)
+                || "groq".equals(lower);
     }
 
     @Override

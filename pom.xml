@@ -26,6 +26,7 @@
         <java.version>17</java.version>
         <spring-boot.version>3.4.0</spring-boot.version>
         <mybatis-plus-spring-boot3-starter.version>3.5.14</mybatis-plus-spring-boot3-starter.version>
+        <spring-ai-session-bom.version>0.2.0</spring-ai-session-bom.version>
     </properties>
 
     <dependencyManagement>
@@ -42,9 +43,14 @@
             <dependency>
                 <groupId>org.springframework.ai</groupId>
                 <artifactId>spring-ai-bom</artifactId>
-                <version>1.0.0</version>
+                <version>1.1.6</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>org.springframerwork.ai</groupId>
+                <artifactId>spring-ai-starter-model-chat-memory-repository-jdbc</artifactId>
             </dependency>
 
         </dependencies>
