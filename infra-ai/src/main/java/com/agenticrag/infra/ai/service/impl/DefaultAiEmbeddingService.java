@@ -6,10 +6,12 @@ import com.agenticrag.infra.ai.service.AiProviderRouter;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
 public class DefaultAiEmbeddingService implements AiEmbeddingService {
+    private static final int MAX_EMBED_BATCH_SIZE = 10;
 
     private final EmbeddingModel embeddingModel;
     private final AiProviderRouter providerRouter;
@@ -32,12 +34,21 @@ public class DefaultAiEmbeddingService implements AiEmbeddingService {
 
     @Override
     public List<float[]> embedAll(List<String> texts) {
-        return embeddingModel.embed(texts);
+        return embedAll(texts, null);
     }
 
     @Override
     public List<float[]> embedAll(List<String> texts, AiRuntimeContext context) {
-        return selectEmbeddingModel(context).embed(texts);
+        if (texts == null || texts.isEmpty()) {
+            return List.of();
+        }
+        EmbeddingModel model = selectEmbeddingModel(context);
+        List<float[]> results = new ArrayList<>(texts.size());
+        for (int start = 0; start < texts.size(); start += MAX_EMBED_BATCH_SIZE) {
+            int end = Math.min(start + MAX_EMBED_BATCH_SIZE, texts.size());
+            results.addAll(model.embed(texts.subList(start, end)));
+        }
+        return results;
     }
 
     private EmbeddingModel selectEmbeddingModel(AiRuntimeContext context) {

@@ -9,11 +9,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Slf4j
 @Service
 public class KnowledgeEmbeddingServiceImpl implements KnowledgeEmbeddingService {
+    private static final int MAX_EMBED_BATCH_SIZE = 10;
 
     private final EmbeddingProperties embeddingProperties;
     private final AiProviderRouter providerRouter;
@@ -55,6 +57,14 @@ public class KnowledgeEmbeddingServiceImpl implements KnowledgeEmbeddingService 
         if (embeddingModel == null) {
             throw new RuntimeException("Knowledge embedding service is not available. Please check embedding configuration.");
         }
-        return embeddingModel.embed(texts);
+        if (texts == null || texts.isEmpty()) {
+            return List.of();
+        }
+        List<float[]> results = new ArrayList<>(texts.size());
+        for (int start = 0; start < texts.size(); start += MAX_EMBED_BATCH_SIZE) {
+            int end = Math.min(start + MAX_EMBED_BATCH_SIZE, texts.size());
+            results.addAll(embeddingModel.embed(texts.subList(start, end)));
+        }
+        return results;
     }
 }
