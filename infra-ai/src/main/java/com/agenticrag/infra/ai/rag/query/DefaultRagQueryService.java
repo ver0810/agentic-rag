@@ -1,10 +1,12 @@
 package com.agenticrag.infra.ai.rag.query;
 
 import com.agenticrag.infra.ai.model.AiChatScene;
+import com.agenticrag.infra.ai.model.AiRuntimeContext;
 import com.agenticrag.infra.ai.rag.vector.VectorStore;
 import com.agenticrag.infra.ai.service.AiChatService;
 import com.agenticrag.infra.ai.service.KnowledgeEmbeddingService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -35,7 +37,7 @@ public class DefaultRagQueryService implements RagQueryService {
 
     public DefaultRagQueryService(KnowledgeEmbeddingService embeddingService,
                                    VectorStore vectorStore,
-                                   AiChatService chatService) {
+                                   @Lazy AiChatService chatService) {
         this.embeddingService = embeddingService;
         this.vectorStore = vectorStore;
         this.chatService = chatService;
@@ -43,11 +45,16 @@ public class DefaultRagQueryService implements RagQueryService {
 
     @Override
     public String query(String query, String kbId, String userId) {
-        return query(query, kbId, userId, DEFAULT_TOP_K);
+        return query(query, kbId, userId, null, DEFAULT_TOP_K);
     }
 
     @Override
     public String query(String query, String kbId, String userId, int topK) {
+        return query(query, kbId, userId, null, topK);
+    }
+
+    @Override
+    public String query(String query, String kbId, String userId, AiRuntimeContext context, int topK) {
         log.info("RAG query: kbId={}, query={}", kbId, query);
 
         float[] queryEmbedding = embeddingService.embed(query);
@@ -63,14 +70,15 @@ public class DefaultRagQueryService implements RagQueryService {
             return "抱歉，我无法根据现有的知识库内容回答您的问题。请尝试换个问题，或者确认知识库中是否有相关信息。";
         }
 
-        String context = results.stream()
+        String retrievedContext = results.stream()
                 .map(VectorStore.VectorSearchResult::content)
                 .collect(Collectors.joining("\n\n"));
 
-        String prompt = String.format(DEFAULT_PROMPT_TEMPLATE, context, query);
+        String prompt = String.format(DEFAULT_PROMPT_TEMPLATE, retrievedContext, query);
 
         log.info("RAG query found {} relevant chunks, generating answer...", results.size());
 
-        return chatService.call(AiChatScene.RAG_QA, prompt, null, null);
+        String conversationId = "rag:" + kbId + ":" + (userId == null ? "anonymous" : userId);
+        return chatService.call(AiChatScene.RAG_QA, prompt, context, conversationId, userId, null);
     }
 }

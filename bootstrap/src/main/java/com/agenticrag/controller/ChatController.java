@@ -128,7 +128,7 @@ public class ChatController {
                        @RequestParam(name = "conversationId") String conversationId) {
         saveMessage(conversationId, userId, "user", message);
         AiRuntimeContext context = userAiProviderConfigService.resolveRuntimeContext(userId);
-        String result = aiChatService.call(AiChatScene.fromCode(scene), message, context, conversationId, kbId);
+        String result = aiChatService.call(AiChatScene.fromCode(scene), message, context, conversationId, userId, kbId);
         saveMessage(conversationId, userId, "assistant", result);
         return result;
     }
@@ -144,7 +144,7 @@ public class ChatController {
         AiRuntimeContext context = userAiProviderConfigService.resolveRuntimeContext(userId);
 
         StringBuilder fullContent = new StringBuilder();
-        return aiChatService.stream(AiChatScene.fromCode(scene), message, context, conversationId, kbId)
+        return aiChatService.stream(AiChatScene.fromCode(scene), message, context, conversationId, userId, kbId)
                 .doOnNext(fullContent::append)
                 .doOnComplete(() -> saveMessage(conversationId, userId, "assistant", fullContent.toString()));
     }
