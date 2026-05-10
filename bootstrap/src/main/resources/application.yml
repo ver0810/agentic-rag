@@ -68,6 +68,9 @@ agenticrag:
       similarity-threshold: 0.55
       vector-weight: 0.75
       keyword-weight: 0.25
+      rewrite-enabled: true
+      rerank-enabled: true
+      max-context-chunks: 6
 
 server:
   servlet:

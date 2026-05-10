@@ -12,6 +12,9 @@ public class RagProperties {
     private double similarityThreshold = 0.55d;
     private double vectorWeight = 0.75d;
     private double keywordWeight = 0.25d;
+    private boolean rewriteEnabled = true;
+    private boolean rerankEnabled = true;
+    private int maxContextChunks = 6;
 
     public boolean isHybridEnabled() {
         return hybridEnabled;
@@ -67,5 +70,29 @@ public class RagProperties {
 
     public void setKeywordWeight(double keywordWeight) {
         this.keywordWeight = keywordWeight;
+    }
+
+    public boolean isRewriteEnabled() {
+        return rewriteEnabled;
+    }
+
+    public void setRewriteEnabled(boolean rewriteEnabled) {
+        this.rewriteEnabled = rewriteEnabled;
+    }
+
+    public boolean isRerankEnabled() {
+        return rerankEnabled;
+    }
+
+    public void setRerankEnabled(boolean rerankEnabled) {
+        this.rerankEnabled = rerankEnabled;
+    }
+
+    public int getMaxContextChunks() {
+        return maxContextChunks;
+    }
+
+    public void setMaxContextChunks(int maxContextChunks) {
+        this.maxContextChunks = maxContextChunks;
     }
 }

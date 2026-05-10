@@ -853,7 +853,15 @@ function ChatInterface() {
                             ? 'bg-[#f4f4f4] text-[#171717] rounded-tr-sm'
                             : 'bg-white text-[#171717]'
                         }`}>
-                          <MessageContent content={message.content} />
+                          {message.role === 'assistant' && isLoading && index === messages.length - 1 && !message.content ? (
+                            <div className="flex gap-1.5 items-center h-6 px-1">
+                              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
+                            </div>
+                          ) : (
+                            <MessageContent content={message.content} />
+                          )}
                         </div>
                         {message.role === 'assistant' && !isLoading && (
                           <div className="flex gap-2 ml-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">

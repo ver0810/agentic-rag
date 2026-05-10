@@ -4,6 +4,7 @@ import java.util.List;
 
 public record RagQueryResult(
         String answer,
+        String rewrittenQuery,
         List<Citation> citations,
         List<RetrievedChunk> retrievedChunks
 ) {

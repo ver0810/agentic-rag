@@ -25,11 +25,15 @@ public class DefaultRagQueryService implements RagQueryService {
     private final VectorStore vectorStore;
     private final AiChatService chatService;
     private final RagProperties ragProperties;
+    private final RagQueryRewriteService ragQueryRewriteService;
+    private final RagRerankService ragRerankService;
 
     private static final String DEFAULT_PROMPT_TEMPLATE = """
-            基于以下上下文回答用户问题。如果上下文中没有相关信息，请说明无法根据提供的信息回答。
+            你是一个严格基于证据回答问题的知识库助手。
+            请只依据以下证据回答用户问题；如果证据不足，请明确说明无法确认。
+            回答时尽量在相关结论后标注证据编号，如 [1]、[2]。
             
-            上下文：
+            证据：
             %s
             
             用户问题：%s
@@ -40,11 +44,15 @@ public class DefaultRagQueryService implements RagQueryService {
     public DefaultRagQueryService(KnowledgeEmbeddingService embeddingService,
                                    VectorStore vectorStore,
                                    @Lazy AiChatService chatService,
-                                   RagProperties ragProperties) {
+                                   RagProperties ragProperties,
+                                   RagQueryRewriteService ragQueryRewriteService,
+                                   RagRerankService ragRerankService) {
         this.embeddingService = embeddingService;
         this.vectorStore = vectorStore;
         this.chatService = chatService;
         this.ragProperties = ragProperties;
+        this.ragQueryRewriteService = ragQueryRewriteService;
+        this.ragRerankService = ragRerankService;
     }
 
     @Override
@@ -70,8 +78,11 @@ public class DefaultRagQueryService implements RagQueryService {
     @Override
     public RagQueryResult queryDetailed(String query, String kbId, String userId, AiRuntimeContext context, int topK) {
         log.info("RAG query: kbId={}, query={}", kbId, query);
+        String rewrittenQuery = ragProperties.isRewriteEnabled()
+                ? ragQueryRewriteService.rewrite(query, userId, context)
+                : query;
 
-        float[] queryEmbedding = embeddingService.embed(query);
+        float[] queryEmbedding = embeddingService.embed(rewrittenQuery);
         int effectiveTopK = topK > 0 ? topK : ragProperties.getDefaultTopK();
         Map<String, Object> filter = Map.of("kbId", kbId);
 
@@ -82,7 +93,7 @@ public class DefaultRagQueryService implements RagQueryService {
         List<VectorStore.VectorSearchResult> results = vectorResults;
         if (ragProperties.isHybridEnabled()) {
             List<VectorStore.VectorSearchResult> keywordResults = vectorStore.keywordSearch(
-                    query,
+                    rewrittenQuery,
                     Math.max(effectiveTopK, ragProperties.getKeywordTopK()),
                     filter);
             results = mergeResults(vectorResults, keywordResults, effectiveTopK);
@@ -95,19 +106,25 @@ public class DefaultRagQueryService implements RagQueryService {
 
         results = results.stream()
                 .filter(r -> r.score() >= ragProperties.getSimilarityThreshold())
-                .limit(effectiveTopK)
                 .collect(Collectors.toList());
+        if (ragProperties.isRerankEnabled()) {
+            results = ragRerankService.rerank(rewrittenQuery, results, effectiveTopK);
+        } else {
+            results = results.stream().limit(effectiveTopK).toList();
+        }
 
         if (results.isEmpty()) {
             log.info("No relevant context found for query: {}", query);
             return new RagQueryResult(
                     "抱歉，我无法根据现有的知识库内容回答您的问题。请尝试换个问题，或者确认知识库中是否有相关信息。",
+                    rewrittenQuery,
                     List.of(),
                     List.of());
         }
 
         String retrievedContext = results.stream()
-                .map(VectorStore.VectorSearchResult::content)
+                .limit(ragProperties.getMaxContextChunks())
+                .map(this::toEvidenceBlock)
                 .collect(Collectors.joining("\n\n"));
 
         String prompt = String.format(DEFAULT_PROMPT_TEMPLATE, retrievedContext, query);
@@ -118,6 +135,7 @@ public class DefaultRagQueryService implements RagQueryService {
         String answer = chatService.call(AiChatScene.RAG_QA, prompt, context, conversationId, userId, null);
         return new RagQueryResult(
                 answer,
+                rewrittenQuery,
                 results.stream().map(this::toCitation).toList(),
                 results.stream().map(this::toRetrievedChunk).toList());
     }
@@ -167,6 +185,16 @@ public class DefaultRagQueryService implements RagQueryService {
             return value;
         }
         return value.substring(0, maxLength);
+    }
+
+    private String toEvidenceBlock(VectorStore.VectorSearchResult result) {
+        Integer chunkIndex = metadataIntegerValue(result, "chunkIndex");
+        String docName = metadataValue(result, "docName");
+        String label = chunkIndex == null ? result.chunkId() : String.valueOf(chunkIndex + 1);
+        return "[" + label + "] "
+                + (docName == null ? "Unknown Document" : docName)
+                + "\n"
+                + result.content();
     }
 
     private List<VectorStore.VectorSearchResult> mergeResults(List<VectorStore.VectorSearchResult> vectorResults,
