@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   Activity, 
   Clock, 
@@ -6,10 +6,6 @@ import {
   XCircle, 
   ChevronRight, 
   ArrowLeft,
-  LayoutGrid,
-  List as ListIcon,
-  Search,
-  Calendar,
   Layers,
   BarChart3,
   Cpu,
@@ -19,17 +15,25 @@ import {
   Columns
 } from 'lucide-react';
 import { TraceAPI } from '../api/trace';
-import type { RagTraceRun, RagTraceNode } from '../api/trace';
+import type { RagTraceRun } from '../api/trace';
 
 interface ObservabilityViewProps {
   // Add props if needed
 }
 
+const safeParse = (data?: string) => {
+  if (!data) return {};
+  try {
+    return JSON.parse(data);
+  } catch {
+    return { raw: data };
+  }
+};
+
 export default function ObservabilityView({}: ObservabilityViewProps) {
   const [traces, setTraces] = useState<RagTraceRun[]>([]);
   const [selectedTrace, setSelectedTrace] = useState<RagTraceRun | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [compareMode, setCompareMode] = useState(false);
   const [selectedForCompare, setSelectedForCompare] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<'list' | 'compare'>('list');
 
@@ -75,15 +79,6 @@ export default function ObservabilityView({}: ObservabilityViewProps) {
         return <XCircle size={16} className="text-red-500" />;
       default:
         return <Clock size={16} className="text-amber-500" />;
-    }
-  };
-
-  const parseExtraData = (data?: string) => {
-    if (!data) return {};
-    try {
-      return JSON.parse(data);
-    } catch {
-      return { raw: data };
     }
   };
 
@@ -219,7 +214,7 @@ export default function ObservabilityView({}: ObservabilityViewProps) {
 }
 
 function TraceDetailView({ trace, onBack }: { trace: RagTraceRun, onBack: () => void }) {
-  const extra = JSON.parse(trace.extraData || '{}');
+  const extra = safeParse(trace.extraData);
   
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 animate-in fade-in slide-in-from-right-4 duration-300">
@@ -348,7 +343,7 @@ function TraceDetailView({ trace, onBack }: { trace: RagTraceRun, onBack: () => 
 
 function NodeExtraData({ data, type }: { data?: string, type: string }) {
   if (!data) return null;
-  const extra = JSON.parse(data);
+  const extra = safeParse(data);
 
   return (
     <div className="mt-3 text-xs space-y-2 overflow-hidden">
@@ -454,7 +449,7 @@ function CompareView({ ids, onBack }: { ids: string[], onBack: () => void }) {
             <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-6">
               <div>
                 <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Query</label>
-                <p className="text-sm font-medium text-gray-900 mt-1">{JSON.parse(trace.extraData || '{}').query}</p>
+                <p className="text-sm font-medium text-gray-900 mt-1">{safeParse(trace.extraData).query}</p>
               </div>
 
               <div className="space-y-4">
@@ -477,7 +472,7 @@ function CompareView({ ids, onBack }: { ids: string[], onBack: () => void }) {
                     <div className="p-3 bg-gray-50 rounded-lg">
                       <p className="text-[10px] text-gray-400 uppercase font-bold">Chunks</p>
                       <p className="text-xl font-bold text-gray-900">
-                        {JSON.parse(trace.nodes.find(n => n.nodeType === 'retrieve')?.extraData || '{}').filteredResultCount || 0}
+                        {safeParse(trace.nodes.find(n => n.nodeType === 'retrieve')?.extraData).filteredResultCount || 0}
                       </p>
                     </div>
                   )}
@@ -485,7 +480,7 @@ function CompareView({ ids, onBack }: { ids: string[], onBack: () => void }) {
                     <div className="p-3 bg-gray-50 rounded-lg">
                       <p className="text-[10px] text-gray-400 uppercase font-bold">Ans Length</p>
                       <p className="text-xl font-bold text-gray-900">
-                        {JSON.parse(trace.nodes.find(n => n.nodeType === 'generate')?.extraData || '{}').answerLength || 0}
+                        {safeParse(trace.nodes.find(n => n.nodeType === 'generate')?.extraData).answerLength || 0}
                       </p>
                     </div>
                   )}

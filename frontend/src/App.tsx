@@ -33,7 +33,8 @@ import {
   Database,
   MessageSquare,
   Library,
-  Activity
+  Activity,
+  Target
 } from 'lucide-react'
 import Login from './pages/Login'
 import Register from './pages/Register'
@@ -46,6 +47,7 @@ import type { KnowledgeBase } from './api/knowledge'
 import KnowledgeBaseView from './components/KnowledgeBaseView'
 import MessageContent from './components/MessageContent'
 import ObservabilityView from './components/ObservabilityView'
+import EvalView from './components/EvalView'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -100,6 +102,7 @@ function ChatInterface() {
   
   // New RAG / KB States
   const [sidebarTab, setSidebarTab] = useState<'chats' | 'knowledge' | 'observability'>('chats')
+  const [obsTab, setObsTab] = useState<'trace' | 'eval'>('trace')
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
   const [activeKb, setActiveKb] = useState<KnowledgeBase | null>(null)
   const [selectedKbId, setSelectedKbId] = useState<string | null>(null)
@@ -565,20 +568,41 @@ function ChatInterface() {
             </>
           ) : (
             <>
-              <div className="flex-1 flex flex-col items-center justify-center text-center p-6 space-y-4">
-                <div className="w-12 h-12 bg-white border border-[#e5e5e5] rounded-xl flex items-center justify-center shadow-sm text-gray-400">
-                  <Activity size={24} />
+              <div className="flex flex-col h-full">
+                <div className="px-2 py-1 text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                  <span>Observability</span>
                 </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-gray-900">Observability</h3>
-                  <p className="text-xs text-gray-500 mt-1">Trace every step of your RAG pipeline in real-time.</p>
+                <div className="space-y-1">
+                  <button
+                    onClick={() => setObsTab('trace')}
+                    className={`w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors ${
+                      obsTab === 'trace' ? 'bg-[#ececec] font-medium' : 'hover:bg-[#ececec] text-gray-600'
+                    }`}
+                  >
+                    <Activity size={16} />
+                    <span>Trace History</span>
+                  </button>
+                  <button
+                    onClick={() => setObsTab('eval')}
+                    className={`w-full flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-colors ${
+                      obsTab === 'eval' ? 'bg-[#ececec] font-medium' : 'hover:bg-[#ececec] text-gray-600'
+                    }`}
+                  >
+                    <Target size={16} />
+                    <span>RAG Evaluation</span>
+                  </button>
                 </div>
-                <button 
-                  onClick={() => setSidebarTab('observability')}
-                  className="w-full py-2 bg-black text-white text-xs font-bold rounded-lg hover:bg-gray-800 transition-colors shadow-sm active:scale-95 transition-all"
-                >
-                  Open Dashboard
-                </button>
+
+                <div className="mt-8 flex-1 flex flex-col items-center justify-center text-center p-4 border-t border-dashed border-gray-200">
+                  <div className="w-10 h-10 bg-white border border-[#e5e5e5] rounded-xl flex items-center justify-center shadow-sm text-gray-400 mb-3">
+                    {obsTab === 'trace' ? <Activity size={20} /> : <Target size={20} />}
+                  </div>
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    {obsTab === 'trace' 
+                      ? "Monitoring real-time RAG execution pipeline steps." 
+                      : "Benchmarking quality metrics against golden datasets."}
+                  </p>
+                </div>
               </div>
             </>
           )}
@@ -835,7 +859,7 @@ function ChatInterface() {
 
         <div className="flex-1 overflow-y-auto scrollbar-hide pt-4">
           {sidebarTab === 'observability' ? (
-            <ObservabilityView />
+            obsTab === 'trace' ? <ObservabilityView /> : <EvalView />
           ) : activeKb ? (
             <KnowledgeBaseView 
               kb={activeKb} 
