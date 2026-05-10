@@ -42,8 +42,13 @@ public class DefaultAiChatService implements AiChatService {
 
     @Override
     public String call(AiChatScene scene, String message, AiRuntimeContext context, String conversationId) {
+        return call(scene, message, context, conversationId, null);
+    }
+
+    @Override
+    public String call(AiChatScene scene, String message, AiRuntimeContext context, String conversationId, String kbId) {
         String enhancedMessage = applyPreEnhancements(message, context);
-        ChatClient chatClient = chatClients.get(conversationId, id -> buildChatClient(scene, context, id));
+        ChatClient chatClient = chatClients.get(conversationId, id -> buildChatClient(scene, context, id, kbId));
         String result = chatClient.prompt()
                 .user(enhancedMessage)
                 .call()
@@ -53,8 +58,13 @@ public class DefaultAiChatService implements AiChatService {
 
     @Override
     public Flux<String> stream(AiChatScene scene, String message, AiRuntimeContext context, String conversationId) {
+        return stream(scene, message, context, conversationId, null);
+    }
+
+    @Override
+    public Flux<String> stream(AiChatScene scene, String message, AiRuntimeContext context, String conversationId, String kbId) {
         String enhancedMessage = applyPreEnhancements(message, context);
-        ChatClient chatClient = chatClients.get(conversationId, id -> buildChatClient(scene, context, id));
+        ChatClient chatClient = chatClients.get(conversationId, id -> buildChatClient(scene, context, id, kbId));
         return chatClient.prompt()
                 .user(enhancedMessage)
                 .stream()
@@ -74,6 +84,10 @@ public class DefaultAiChatService implements AiChatService {
     }
 
     private ChatClient buildChatClient(AiChatScene scene, AiRuntimeContext context, String conversationId) {
+        return buildChatClient(scene, context, conversationId, null);
+    }
+
+    private ChatClient buildChatClient(AiChatScene scene, AiRuntimeContext context, String conversationId, String kbId) {
         ChatModel selectedModel = selectChatModel(context, scene);
         AiChatProperties.SceneOptions sceneOptions = properties.getScenes().get(resolveSceneCode(scene));
 
@@ -86,6 +100,8 @@ public class DefaultAiChatService implements AiChatService {
                 )
                 .defaultOptions(buildOptions(sceneOptions, context));
 
+        // TODO: If scene is RAG_QA and kbId is present, add QuestionAnswerAdvisor
+        
         if (sceneOptions != null && hasText(sceneOptions.getSystemPrompt())) {
             builder.defaultSystem(sceneOptions.getSystemPrompt());
         }

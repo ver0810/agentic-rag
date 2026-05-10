@@ -123,11 +123,12 @@ public class ChatController {
     @PostMapping
     public String chat(@RequestParam(name = "message") String message,
                        @RequestParam(name = "scene", required = false) String scene,
+                       @RequestParam(name = "kbId", required = false) String kbId,
                        @CurrentUser String userId,
                        @RequestParam(name = "conversationId") String conversationId) {
         saveMessage(conversationId, userId, "user", message);
         AiRuntimeContext context = userAiProviderConfigService.resolveRuntimeContext(userId);
-        String result = aiChatService.call(AiChatScene.fromCode(scene), message, context, conversationId);
+        String result = aiChatService.call(AiChatScene.fromCode(scene), message, context, conversationId, kbId);
         saveMessage(conversationId, userId, "assistant", result);
         return result;
     }
@@ -136,13 +137,14 @@ public class ChatController {
     @PostMapping("/stream")
     public Flux<String> stream(@RequestParam(name = "message") String message,
                                @RequestParam(name = "scene", required = false) String scene,
+                               @RequestParam(name = "kbId", required = false) String kbId,
                                @CurrentUser String userId,
                                @RequestParam(name = "conversationId") String conversationId) {
         saveMessage(conversationId, userId, "user", message);
         AiRuntimeContext context = userAiProviderConfigService.resolveRuntimeContext(userId);
 
         StringBuilder fullContent = new StringBuilder();
-        return aiChatService.stream(AiChatScene.fromCode(scene), message, context, conversationId)
+        return aiChatService.stream(AiChatScene.fromCode(scene), message, context, conversationId, kbId)
                 .doOnNext(fullContent::append)
                 .doOnComplete(() -> saveMessage(conversationId, userId, "assistant", fullContent.toString()));
     }

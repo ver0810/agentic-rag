@@ -8,5 +8,9 @@ public interface AiChatService {
 
     String call(AiChatScene scene, String message, AiRuntimeContext context, String conversationId);
 
+    String call(AiChatScene scene, String message, AiRuntimeContext context, String conversationId, String kbId);
+
     Flux<String> stream(AiChatScene scene, String message, AiRuntimeContext context, String conversationId);
+
+    Flux<String> stream(AiChatScene scene, String message, AiRuntimeContext context, String conversationId, String kbId);
 }

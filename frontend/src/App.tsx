@@ -29,12 +29,21 @@ import {
   ChevronDown,
   MoreHorizontal,
   Pencil,
-  Trash2
+  Trash2,
+  Database,
+  MessageSquare,
+  Library
 } from 'lucide-react'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import ProtectedRoute from './components/ProtectedRoute'
 import AddModelModal from './components/AddModelModal'
+import AddKbModal from './components/AddKbModal'
+import { ChatAPI } from './api/chat'
+import { KnowledgeAPI } from './api/knowledge'
+import type { KnowledgeBase } from './api/knowledge'
+import KnowledgeBaseView from './components/KnowledgeBaseView'
+import MessageContent from './components/MessageContent'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -73,8 +82,10 @@ function ChatInterface() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [showModelMenu, setShowModelMenu] = useState(false)
+  const [showSceneMenu, setShowSceneMenu] = useState(false)
   const [modelSearchQuery, setModelSearchQuery] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
+  const [showAddKbModal, setShowAddKbModal] = useState(false)
   const [aiSettings, setAiSettings] = useState<AiSettings | null>(null)
   const [configuredModels, setConfiguredModels] = useState<ConfiguredModelOption[]>([])
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -84,6 +95,13 @@ function ChatInterface() {
   const [activeMenuSessionId, setActiveMenuSessionId] = useState<string | null>(null)
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
+  
+  // New RAG / KB States
+  const [sidebarTab, setSidebarTab] = useState<'chats' | 'knowledge'>('chats')
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
+  const [activeKb, setActiveKb] = useState<KnowledgeBase | null>(null)
+  const [selectedKbId, setSelectedKbId] = useState<string | null>(null)
+  
   const navigate = useNavigate();
 
   const userStr = localStorage.getItem('user')
@@ -94,8 +112,36 @@ function ChatInterface() {
       fetchAiSettings()
       fetchConfiguredModels()
       fetchSessions()
+      fetchKnowledgeBases()
     }
   }, [])
+
+  const fetchKnowledgeBases = async () => {
+    try {
+      const response = await KnowledgeAPI.list()
+      setKnowledgeBases(Array.isArray(response.data) ? response.data : [])
+    } catch (err) {
+      console.error('Failed to fetch knowledge bases', err)
+      setKnowledgeBases([])
+    }
+  }
+
+  const handleCreateKb = () => {
+    setShowAddKbModal(true)
+  }
+
+  const handleDeleteKb = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this Knowledge Base?')) return
+    try {
+      await KnowledgeAPI.delete(id)
+      if (activeKb?.id === id) setActiveKb(null)
+      if (selectedKbId === id) setSelectedKbId(null)
+      fetchKnowledgeBases()
+    } catch (err) {
+      console.error('Failed to delete KB', err)
+      setError('Failed to delete Knowledge Base')
+    }
+  }
 
   const fetchAiSettings = async () => {
     try {
@@ -258,72 +304,46 @@ function ChatInterface() {
     setMessages(prev => [...prev, assistantMessage])
 
     try {
-      const url = new URL('/chat/stream', window.location.origin)
-      url.searchParams.append('message', input)
-
       let sessionId = currentSessionId;
       let isNewSession = false;
       if (!sessionId) {
-        const res = await axios.post("/chat/session/new");
+        const res = await ChatAPI.newSession();
         sessionId = res.data.sessionId;
         setCurrentSessionId(sessionId);
         isNewSession = true;
-        fetchSessions(); // Show "New Chat" in sidebar immediately
+        fetchSessions();
       }
 
-      url.searchParams.append('conversationId', sessionId!);
-
-      const response = await fetch(url.toString(), {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`,
-          'X-User-Id': user?.id || ''
+      await ChatAPI.streamChat(
+        input,
+        sessionId!,
+        selectedKbId ? 'rag_qa' : undefined,
+        selectedKbId || undefined,
+        (accumulatedContent) => {
+          setMessages(prev => {
+            const newMessages = [...prev]
+            newMessages[newMessages.length - 1] = {
+              ...newMessages[newMessages.length - 1],
+              content: accumulatedContent
+            }
+            return newMessages
+          })
         }
-      })
+      );
 
-      if (response.status === 401) {
-        localStorage.removeItem('token')
-        localStorage.removeItem('refreshToken')
-        localStorage.removeItem('user')
-        localStorage.removeItem('userId')
-        navigate('/login')
-        throw new Error('Unauthorized')
-      }
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => '')
-        throw new Error(`Failed to fetch (${response.status}): ${errorText}`)
-      }
-
-      const reader = response.body?.getReader()
-      if (!reader) throw new Error('No reader')
-
-      const decoder = new TextDecoder()
-      let done = false
-      let accumulatedContent = ''
-
-      while (!done) {
-        const { value, done: doneReading } = await reader.read()
-        done = doneReading
-        const chunkValue = decoder.decode(value)
-        accumulatedContent += chunkValue
-
-        setMessages(prev => {
-          const newMessages = [...prev]
-          newMessages[newMessages.length - 1] = {
-            ...newMessages[newMessages.length - 1],
-            content: accumulatedContent
-          }
-          return newMessages
-        })
-      }
-
-      // If it was the first message of a new session, refresh sessions to get the auto-generated title
       if (isNewSession) {
         fetchSessions();
       }
     } catch (error: any) {
       console.error('Error:', error)
+      if (error.message === 'Unauthorized') {
+        localStorage.removeItem('token')
+        localStorage.removeItem('refreshToken')
+        localStorage.removeItem('user')
+        localStorage.removeItem('userId')
+        navigate('/login')
+        return
+      }
       setMessages(prev => {
         const newMessages = [...prev]
         newMessages[newMessages.length - 1] = {
@@ -348,6 +368,12 @@ function ChatInterface() {
         }}
       />
 
+      <AddKbModal
+        isOpen={showAddKbModal}
+        onClose={() => setShowAddKbModal(false)}
+        onSuccess={fetchKnowledgeBases}
+      />
+
       {error && (
         <div className="fixed top-4 right-4 z-50 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-in fade-in slide-in-from-right-2 duration-300">
           <span className="text-sm">{error}</span>
@@ -364,98 +390,166 @@ function ChatInterface() {
         } transition-all duration-300 ease-in-out flex flex-col bg-[#f9f9f9] border-r border-[#e5e5e5] overflow-hidden`}
       >
         <div className="p-3 flex flex-col h-full w-[260px]">
-          <button className="flex items-center justify-between w-full p-2 text-sm font-medium hover:bg-[#ececec] rounded-lg transition-colors group"
-          onClick={handleCreateSession}
-          >
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 bg-white border border-[#e5e5e5] rounded-full flex items-center justify-center shadow-sm">
-                <Plus size={16} />
-              </div>
-              <span>New Chat</span>
-            </div>
-            <SquareTerminal size={16} className="text-gray-400 group-hover:text-black" />
-          </button>
-
-          <div className="flex-1 mt-4 overflow-y-auto space-y-1">
-            <div className="px-2 py-1 text-[11px] font-semibold text-gray-500 uppercase tracking-wider flex items-center justify-between">
-              <span>Recent</span>
-            </div>
-            {recentChats.length === 0 ? (
-              <div className="px-3 py-2 text-sm text-gray-400 italic">No recent chats</div>
-            ) : (
-              recentChats.map((chat) => (
-                <div key={chat.sessionId} className="group/item relative">
-                  {editingSessionId === chat.sessionId ? (
-                    <input
-                      autoFocus
-                      className="w-full text-left px-3 py-2 text-sm rounded-lg bg-white border border-gray-300 outline-none"
-                      value={editingTitle}
-                      onChange={(e) => setEditingTitle(e.target.value)}
-                      onBlur={() => handleInlineRename(chat.sessionId)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleInlineRename(chat.sessionId)
-                        if (e.key === 'Escape') setEditingSessionId(null)
-                      }}
-                    />
-                  ) : (
-                    <>
-                      <button
-                        onClick={() => handleSwitchSession(chat.sessionId)}
-                        className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors truncate pr-10 ${
-                          currentSessionId === chat.sessionId ? 'bg-[#ececec] font-medium' : 'hover:bg-[#ececec] text-gray-600'
-                        }`}
-                      >
-                        {chat.chatTitle}
-                      </button>
-                      
-                      <div className="absolute right-1 top-1 opacity-0 group-hover/item:opacity-100 transition-opacity">
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setActiveMenuSessionId(activeMenuSessionId === chat.sessionId ? null : chat.sessionId);
-                          }}
-                          className="p-1.5 hover:bg-gray-200 rounded-full text-gray-500 hover:text-black transition-colors"
-                        >
-                          <MoreHorizontal size={14} />
-                        </button>
-                        
-                        {activeMenuSessionId === chat.sessionId && (
-                          <>
-                            <div 
-                              className="fixed inset-0 z-40" 
-                              onClick={() => setActiveMenuSessionId(null)} 
-                            />
-                            <div className="absolute right-0 top-full mt-1 w-32 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleRenameSession(chat.sessionId, chat.chatTitle);
-                                }}
-                                className="flex items-center gap-2 w-full px-3 py-1.5 text-xs hover:bg-gray-50 text-gray-700 transition-colors"
-                              >
-                                <Pencil size={12} />
-                                <span>Rename</span>
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteSession(chat.sessionId);
-                                }}
-                                className="flex items-center gap-2 w-full px-3 py-1.5 text-xs hover:bg-red-50 text-red-600 transition-colors"
-                              >
-                                <Trash2 size={12} />
-                                <span>Delete</span>
-                              </button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </div>
-              ))
-            )}
+          {/* Sidebar Tabs */}
+          <div className="flex bg-[#ececec] p-1 rounded-xl mb-4">
+            <button
+              onClick={() => setSidebarTab('chats')}
+              className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                sidebarTab === 'chats' ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <MessageSquare size={14} />
+              <span>Chats</span>
+            </button>
+            <button
+              onClick={() => setSidebarTab('knowledge')}
+              className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                sidebarTab === 'knowledge' ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Library size={14} />
+              <span>Knowledge</span>
+            </button>
           </div>
+
+          {sidebarTab === 'chats' ? (
+            <>
+              <button className="flex items-center justify-between w-full p-2 text-sm font-medium hover:bg-[#ececec] rounded-lg transition-colors group"
+              onClick={() => {
+                setActiveKb(null);
+                handleCreateSession();
+              }}
+              >
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 bg-white border border-[#e5e5e5] rounded-full flex items-center justify-center shadow-sm">
+                    <Plus size={16} />
+                  </div>
+                  <span>New Chat</span>
+                </div>
+                <SquareTerminal size={16} className="text-gray-400 group-hover:text-black" />
+              </button>
+
+              <div className="flex-1 mt-4 overflow-y-auto space-y-1">
+                <div className="px-2 py-1 text-[11px] font-semibold text-gray-500 uppercase tracking-wider flex items-center justify-between">
+                  <span>Recent</span>
+                </div>
+                {recentChats.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-gray-400 italic">No recent chats</div>
+                ) : (
+                  recentChats.map((chat) => (
+                    <div key={chat.sessionId} className="group/item relative">
+                      {editingSessionId === chat.sessionId ? (
+                        <input
+                          autoFocus
+                          className="w-full text-left px-3 py-2 text-sm rounded-lg bg-white border border-gray-300 outline-none"
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          onBlur={() => handleInlineRename(chat.sessionId)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleInlineRename(chat.sessionId)
+                            if (e.key === 'Escape') setEditingSessionId(null)
+                          }}
+                        />
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => {
+                              setActiveKb(null);
+                              handleSwitchSession(chat.sessionId);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors truncate pr-10 ${
+                              currentSessionId === chat.sessionId && !activeKb ? 'bg-[#ececec] font-medium' : 'hover:bg-[#ececec] text-gray-600'
+                            }`}
+                          >
+                            {chat.chatTitle}
+                          </button>
+                          
+                          <div className="absolute right-1 top-1 opacity-0 group-hover/item:opacity-100 transition-opacity">
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveMenuSessionId(activeMenuSessionId === chat.sessionId ? null : chat.sessionId);
+                              }}
+                              className="p-1.5 hover:bg-gray-200 rounded-full text-gray-500 hover:text-black transition-colors"
+                            >
+                              <MoreHorizontal size={14} />
+                            </button>
+                            
+                            {activeMenuSessionId === chat.sessionId && (
+                              <>
+                                <div 
+                                  className="fixed inset-0 z-40" 
+                                  onClick={() => setActiveMenuSessionId(null)} 
+                                />
+                                <div className="absolute right-0 top-full mt-1 w-32 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRenameSession(chat.sessionId, chat.chatTitle);
+                                    }}
+                                    className="flex items-center gap-2 w-full px-3 py-1.5 text-xs hover:bg-gray-50 text-gray-700 transition-colors"
+                                  >
+                                    <Pencil size={12} />
+                                    <span>Rename</span>
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteSession(chat.sessionId);
+                                    }}
+                                    className="flex items-center gap-2 w-full px-3 py-1.5 text-xs hover:bg-red-50 text-red-600 transition-colors"
+                                  >
+                                    <Trash2 size={12} />
+                                    <span>Delete</span>
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <button 
+                className="flex items-center justify-between w-full p-2 text-sm font-medium hover:bg-[#ececec] rounded-lg transition-colors group"
+                onClick={handleCreateKb}
+              >
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 bg-white border border-[#e5e5e5] rounded-full flex items-center justify-center shadow-sm">
+                    <Plus size={16} />
+                  </div>
+                  <span>New Base</span>
+                </div>
+                <Database size={16} className="text-gray-400 group-hover:text-black" />
+              </button>
+
+              <div className="flex-1 mt-4 overflow-y-auto space-y-1">
+                <div className="px-2 py-1 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                  <span>Knowledge Bases</span>
+                </div>
+                {knowledgeBases.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-gray-400 italic">No knowledge bases</div>
+                ) : (
+                  knowledgeBases.map((kb) => (
+                    <button
+                      key={kb.id}
+                      onClick={() => setActiveKb(kb)}
+                      className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors truncate ${
+                        activeKb?.id === kb.id ? 'bg-[#ececec] font-medium' : 'hover:bg-[#ececec] text-gray-600'
+                      }`}
+                    >
+                      {kb.name}
+                    </button>
+                  ))
+                )}
+              </div>
+            </>
+          )}
 
           <div className="pt-4 mt-auto border-t border-[#e5e5e5] relative">
             {user ? (
@@ -537,11 +631,14 @@ function ChatInterface() {
 
             <div className="ml-2 flex items-center gap-3">
               <div className="font-semibold text-lg tracking-tight">Agentic RAG</div>
+              
+              {/* Model Selector */}
               <div className="relative">
                 <button
                   onClick={() => {
                     if (showModelMenu) setModelSearchQuery('')
                     setShowModelMenu(!showModelMenu)
+                    setShowSceneMenu(false)
                   }}
                   className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-gray-50 rounded-lg transition-colors text-sm font-medium text-gray-400 border border-gray-200/60 shadow-sm"
                 >
@@ -609,10 +706,6 @@ function ChatInterface() {
                             </button>
                           ))
                         )}
-                        {configuredModels.length > 0 && 
-                         configuredModels.filter(m => m.chatModel.toLowerCase().includes(modelSearchQuery.toLowerCase()) || m.provider.toLowerCase().includes(modelSearchQuery.toLowerCase())).length === 0 && (
-                          <div className="px-4 py-3 text-sm text-gray-400 text-center">No models found</div>
-                        )}
                       </div>
                       <div className="h-px bg-gray-100 my-1" />
                       <button
@@ -630,118 +723,205 @@ function ChatInterface() {
                   </>
                 )}
               </div>
+
+              {/* Scene / KB Selector */}
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    setShowSceneMenu(!showSceneMenu)
+                    setShowModelMenu(false)
+                  }}
+                  className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-gray-50 rounded-lg transition-colors text-sm font-medium text-gray-400 border border-gray-200/60 shadow-sm"
+                >
+                  <Database size={14} className="text-blue-500/70" />
+                  <span className="max-w-[150px] truncate">
+                    {selectedKbId 
+                      ? `RAG: ${knowledgeBases.find(k => k.id === selectedKbId)?.name}` 
+                      : 'Standard Chat'}
+                  </span>
+                  <ChevronDown size={12} className="text-gray-400" />
+                </button>
+
+                {showSceneMenu && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-20"
+                      onClick={() => setShowSceneMenu(false)}
+                    />
+                    <div className="absolute top-full left-0 mt-1.5 w-64 bg-white border border-gray-200 rounded-xl shadow-xl py-1 z-30 animate-in fade-in slide-in-from-top-1 duration-200">
+                      <div className="px-3 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-50 mb-1">
+                        Chat Mode
+                      </div>
+                      <button
+                        onClick={() => {
+                          setSelectedKbId(null)
+                          setShowSceneMenu(false)
+                        }}
+                        className="flex items-center justify-between w-full px-3 py-2.5 text-sm hover:bg-gray-50 transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                          <MessageSquare size={14} className="text-gray-400" />
+                          <span className={!selectedKbId ? 'font-medium text-black' : 'text-gray-600'}>Standard Chat</span>
+                        </div>
+                        {!selectedKbId && <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />}
+                      </button>
+                      
+                      <div className="px-3 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest border-y border-gray-50 my-1">
+                        Knowledge Bases (RAG)
+                      </div>
+                      <div className="max-h-64 overflow-y-auto scrollbar-hide">
+                        {knowledgeBases.length === 0 ? (
+                          <div className="px-4 py-3 text-xs text-gray-400 italic">No knowledge bases found</div>
+                        ) : (
+                          knowledgeBases.map((kb) => (
+                            <button
+                              key={kb.id}
+                              onClick={() => {
+                                setSelectedKbId(kb.id)
+                                setShowSceneMenu(false)
+                              }}
+                              className="flex items-center justify-between w-full px-3 py-2.5 text-sm hover:bg-gray-50 transition-colors"
+                            >
+                              <div className="flex items-center gap-2 truncate">
+                                <Library size={14} className="text-gray-400 flex-shrink-0" />
+                                <span className={`truncate ${selectedKbId === kb.id ? 'font-medium text-black' : 'text-gray-600'}`}>
+                                  {kb.name}
+                                </span>
+                              </div>
+                              {selectedKbId === kb.id && <div className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0 ml-2" />}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </header>
 
         <div className="flex-1 overflow-y-auto scrollbar-hide pt-4">
-          <div className="max-w-3xl mx-auto px-4 w-full">
-            {isLoadingMessages ? (
-              <div className="h-[70vh] flex flex-col items-center justify-center space-y-4">
-                <div className="w-8 h-8 border-2 border-gray-200 border-t-black rounded-full animate-spin" />
-                <p className="text-sm text-gray-400">Loading messages...</p>
-              </div>
-            ) : messages.length === 0 ? (
-              <div className="h-[70vh] flex flex-col items-center justify-center space-y-6">
-                <div className="w-16 h-16 bg-white border border-gray-200 rounded-2xl flex items-center justify-center shadow-sm text-black">
-                  <Bot size={32} strokeWidth={1.5} />
+          {activeKb ? (
+            <KnowledgeBaseView 
+              kb={activeKb} 
+              onDelete={() => handleDeleteKb(activeKb.id)} 
+            />
+          ) : (
+            <div className="max-w-3xl mx-auto px-4 w-full">
+              {isLoadingMessages ? (
+                <div className="h-[70vh] flex flex-col items-center justify-center space-y-4">
+                  <div className="w-8 h-8 border-2 border-gray-200 border-t-black rounded-full animate-spin" />
+                  <p className="text-sm text-gray-400">Loading messages...</p>
                 </div>
-                <h2 className="text-2xl font-semibold tracking-tight">How can I help you today?</h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-xl">
-                  {[
-                    { text: 'Explain quantum computing', icon: <Search size={14} /> },
-                    { text: 'Write a professional email', icon: <Mail size={14} /> },
-                    { text: 'Help me debug my code', icon: <Bug size={14} /> },
-                    { text: 'Plan a weekend trip', icon: <Map size={14} /> }
-                  ].map((suggestion) => (
-                    <button
-                      key={suggestion.text}
-                      onClick={() => setInput(suggestion.text)}
-                      className="p-4 text-left text-sm border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-gray-600 flex items-center justify-between group"
-                    >
-                      <span>{suggestion.text}</span>
-                      <span className="opacity-0 group-hover:opacity-100 transition-opacity">{suggestion.icon}</span>
-                    </button>
-                  ))}
+              ) : messages.length === 0 ? (
+                <div className="h-[70vh] flex flex-col items-center justify-center space-y-6">
+                  <div className="w-16 h-16 bg-white border border-gray-200 rounded-2xl flex items-center justify-center shadow-sm text-black">
+                    <Bot size={32} strokeWidth={1.5} />
+                  </div>
+                  <h2 className="text-2xl font-semibold tracking-tight">How can I help you today?</h2>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-xl">
+                    {[
+                      { text: 'Explain quantum computing', icon: <Search size={14} /> },
+                      { text: 'Write a professional email', icon: <Mail size={14} /> },
+                      { text: 'Help me debug my code', icon: <Bug size={14} /> },
+                      { text: 'Plan a weekend trip', icon: <Map size={14} /> }
+                    ].map((suggestion) => (
+                      <button
+                        key={suggestion.text}
+                        onClick={() => setInput(suggestion.text)}
+                        className="p-4 text-left text-sm border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-gray-600 flex items-center justify-between group"
+                      >
+                        <span>{suggestion.text}</span>
+                        <span className="opacity-0 group-hover:opacity-100 transition-opacity">{suggestion.icon}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="space-y-8 pb-32">
-                {messages.map((message, index) => (
-                  <div key={index} className={`flex gap-4 group ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    {message.role === 'assistant' && (
-                      <div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center text-white flex-shrink-0 mt-0.5 shadow-sm">
-                        <Bot size={18} />
+              ) : (
+                <div className="space-y-8 pb-32">
+                  {messages.map((message, index) => (
+                    <div key={index} className={`flex gap-4 group ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      {message.role === 'assistant' && (
+                        <div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center text-white flex-shrink-0 mt-0.5 shadow-sm">
+                          <Bot size={18} />
+                        </div>
+                      )}
+                      <div className={`group relative flex flex-col gap-1 max-w-[85%] ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
+                        <div className={`px-4 py-2.5 rounded-2xl text-[15px] leading-relaxed ${
+                          message.role === 'user'
+                            ? 'bg-[#f4f4f4] text-[#171717] rounded-tr-sm'
+                            : 'bg-white text-[#171717]'
+                        }`}>
+                          <MessageContent content={message.content} />
+                        </div>
+                        {message.role === 'assistant' && !isLoading && (
+                          <div className="flex gap-2 ml-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={() => navigator.clipboard.writeText(message.content)}
+                              className="p-1.5 hover:bg-gray-100 rounded text-gray-400 hover:text-gray-600"
+                              title="Copy to clipboard"
+                            >
+                              <Copy size={14} />
+                            </button>
+                            <button className="p-1.5 hover:bg-gray-100 rounded text-gray-400 hover:text-gray-600">
+                              <ThumbsUp size={14} />
+                            </button>
+                          </div>
+                        )}
                       </div>
-                    )}
-                    <div className={`group relative flex flex-col gap-1 max-w-[85%] ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
-                      <div className={`px-4 py-2.5 rounded-2xl text-[15px] leading-relaxed ${
-                        message.role === 'user'
-                          ? 'bg-[#f4f4f4] text-[#171717] rounded-tr-sm'
-                          : 'bg-white text-[#171717]'
-                      }`}>
-                        <div className="whitespace-pre-wrap">{message.content}</div>
-                      </div>
-                      {message.role === 'assistant' && !isLoading && (
-                        <div className="flex gap-2 ml-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button className="p-1.5 hover:bg-gray-100 rounded text-gray-400 hover:text-gray-600">
-                            <Copy size={14} />
-                          </button>
-                          <button className="p-1.5 hover:bg-gray-100 rounded text-gray-400 hover:text-gray-600">
-                            <ThumbsUp size={14} />
-                          </button>
+                      {message.role === 'user' && (
+                        <div className="w-8 h-8 rounded-full bg-[#171717] flex items-center justify-center text-white flex-shrink-0 mt-0.5">
+                          <User size={16} />
                         </div>
                       )}
                     </div>
-                    {message.role === 'user' && (
-                      <div className="w-8 h-8 rounded-full bg-[#171717] flex items-center justify-center text-white flex-shrink-0 mt-0.5">
-                        <User size={16} />
-                      </div>
-                    )}
-                  </div>
-                ))}
-                <div ref={messagesEndRef} />
-              </div>
-            )}
-          </div>
+                  ))}
+                  <div ref={messagesEndRef} />
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-white via-white/95 to-transparent pt-10 pb-6 px-4">
-          <div className="max-w-3xl mx-auto relative group">
-            <form onSubmit={handleSubmit} className="relative bg-white border border-[#e5e5e5] rounded-2xl shadow-[0_0_20px_rgba(0,0,0,0.05)] focus-within:border-gray-300 transition-all overflow-hidden">
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    handleSubmit(e)
-                  }
-                }}
-                placeholder="Message Agentic RAG..."
-                rows={1}
-                className="w-full p-4 pr-16 resize-none bg-transparent focus:outline-none text-[15px] max-h-40 scrollbar-hide"
-                style={{ height: 'auto' }}
-              />
-              <div className="absolute right-3 bottom-3 flex items-center gap-2">
-                <button
-                  type="submit"
-                  disabled={isLoading || !input.trim()}
-                  className={`p-2 rounded-xl transition-all ${
-                    isLoading || !input.trim()
-                      ? 'bg-gray-100 text-gray-300'
-                      : 'bg-black text-white hover:scale-105 active:scale-95'
-                  }`}
-                >
-                  <Send size={18} strokeWidth={2.5} />
-                </button>
-              </div>
-            </form>
-            <p className="text-[11px] text-center text-gray-400 mt-3 font-medium">
-              Agentic RAG can make mistakes. Check important info.
-            </p>
+        {!activeKb && (
+          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-white via-white/95 to-transparent pt-10 pb-6 px-4">
+            <div className="max-w-3xl mx-auto relative group">
+              <form onSubmit={handleSubmit} className="relative bg-white border border-[#e5e5e5] rounded-2xl shadow-[0_0_20px_rgba(0,0,0,0.05)] focus-within:border-gray-300 transition-all overflow-hidden">
+                <textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleSubmit(e)
+                    }
+                  }}
+                  placeholder="Message Agentic RAG..."
+                  rows={1}
+                  className="w-full p-4 pr-16 resize-none bg-transparent focus:outline-none text-[15px] max-h-40 scrollbar-hide"
+                  style={{ height: 'auto' }}
+                />
+                <div className="absolute right-3 bottom-3 flex items-center gap-2">
+                  <button
+                    type="submit"
+                    disabled={isLoading || !input.trim()}
+                    className={`p-2 rounded-xl transition-all ${
+                      isLoading || !input.trim()
+                        ? 'bg-gray-100 text-gray-300'
+                        : 'bg-black text-white hover:scale-105 active:scale-95'
+                    }`}
+                  >
+                    <Send size={18} strokeWidth={2.5} />
+                  </button>
+                </div>
+              </form>
+              <p className="text-[11px] text-center text-gray-400 mt-3 font-medium">
+                Agentic RAG can make mistakes. Check important info.
+              </p>
+            </div>
           </div>
-        </div>
+        )}
       </main>
     </div>
   )

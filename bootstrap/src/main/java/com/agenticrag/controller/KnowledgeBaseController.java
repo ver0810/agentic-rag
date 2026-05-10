@@ -32,6 +32,9 @@ public class KnowledgeBaseController {
                                                    @CurrentUser String userId) {
         knowledgeBase.setCreatedBy(userId);
         knowledgeBase.setCollectionName("kb_" + SessionIdGenerator.generate());
+        if (knowledgeBase.getEmbeddingModel() == null || knowledgeBase.getEmbeddingModel().isBlank()) {
+            knowledgeBase.setEmbeddingModel("text-embedding-3-small");
+        }
         return ResponseEntity.ok(knowledgeBaseService.create(knowledgeBase));
     }
 
