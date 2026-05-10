@@ -1,6 +1,7 @@
 package com.agenticrag.ragtrace.service.impl;
 
 import com.agenticrag.common.ApiException;
+import com.agenticrag.utils.SessionIdGenerator;
 import com.agenticrag.ragtrace.dao.entity.RagTraceNodeDao;
 import com.agenticrag.ragtrace.dao.entity.RagTraceRunDao;
 import com.agenticrag.ragtrace.dao.mapper.RagTraceNodeMapper;
@@ -19,7 +20,6 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @Service
 public class RagTraceServiceImpl implements RagTraceService {
@@ -38,12 +38,12 @@ public class RagTraceServiceImpl implements RagTraceService {
 
     @Override
     public String startRun(String traceName, String entryMethod, String conversationId, String userId, Map<String, Object> extraData) {
-        String traceId = UUID.randomUUID().toString().replace("-", "");
+        String traceId = SessionIdGenerator.generate();
         RagTraceRunDao run = new RagTraceRunDao();
         run.setTraceId(traceId);
         run.setTraceName(traceName);
         run.setEntryMethod(entryMethod);
-        run.setConversationId(conversationId);
+        run.setConversationId(abbreviate(conversationId, 20));
         run.setUserId(userId);
         run.setStatus("RUNNING");
         run.setExtraData(serialize(extraData));
@@ -81,8 +81,8 @@ public class RagTraceServiceImpl implements RagTraceService {
     @Override
     public String startNode(String traceId, String nodeType, String nodeName, Map<String, Object> extraData) {
         RagTraceNodeDao node = new RagTraceNodeDao();
-        String nodeId = UUID.randomUUID().toString().replace("-", "");
-        node.setTraceId(traceId);
+        String nodeId = SessionIdGenerator.generate();
+        node.setTraceId(abbreviate(traceId, 20));
         node.setNodeId(nodeId);
         node.setDepth(0);
         node.setNodeType(nodeType);
@@ -246,5 +246,12 @@ public class RagTraceServiceImpl implements RagTraceService {
             return null;
         }
         return message.length() > 1000 ? message.substring(0, 1000) : message;
+    }
+
+    private String abbreviate(String value, int maxLength) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        return value.length() > maxLength ? value.substring(0, maxLength) : value;
     }
 }

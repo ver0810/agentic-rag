@@ -1,58 +1,77 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  FileText, 
-  Upload, 
-  Play, 
-  Trash2, 
-  File, 
-  Loader2, 
+import { useEffect, useState } from 'react';
+import {
+  FileText,
+  Upload,
+  Play,
+  RotateCcw,
+  Trash2,
+  File,
+  Loader2,
   AlertCircle,
   CheckCircle2,
   Clock
 } from 'lucide-react';
 import { KnowledgeAPI } from '../api/knowledge';
-import type { KnowledgeBase, KnowledgeDocument } from '../api/knowledge';
+import type { IngestionTask, KnowledgeBase, KnowledgeDocument } from '../api/knowledge';
 
 interface KnowledgeBaseViewProps {
   kb: KnowledgeBase;
   onDelete: () => void;
 }
 
-const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({ kb, onDelete }) => {
+export default function KnowledgeBaseView({ kb, onDelete }: KnowledgeBaseViewProps) {
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [tasksByDocument, setTasksByDocument] = useState<Record<string, IngestionTask[]>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchDocuments();
+    void fetchDocuments();
   }, [kb.id]);
 
   useEffect(() => {
     const hasActiveProcessing = documents.some((doc) => {
       const status = doc.status?.toLowerCase();
-      return status === 'queued' || status === 'running';
+      const taskStatus = latestTask(doc.id)?.status;
+      return status === 'queued' || status === 'running' || taskStatus === 'RUNNING' || taskStatus === 'RETRYING';
     });
     if (!hasActiveProcessing) {
       return;
     }
     const timer = window.setInterval(() => {
-      fetchDocuments();
+      void fetchDocuments();
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [documents, kb.id]);
+  }, [documents, tasksByDocument, kb.id]);
 
   const fetchDocuments = async () => {
     setIsLoading(true);
     try {
       const response = await KnowledgeAPI.listDocuments(kb.id);
       setDocuments(response.data);
+      await fetchTasksForDocuments(response.data);
     } catch (err) {
       console.error('Failed to fetch documents', err);
       setError('Failed to load documents');
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const fetchTasksForDocuments = async (docs: KnowledgeDocument[]) => {
+    const entries = await Promise.all(
+      docs.map(async (doc) => {
+        try {
+          const response = await KnowledgeAPI.listDocumentTasks(doc.id);
+          return [doc.id, response.data] as const;
+        } catch (err) {
+          console.error('Failed to fetch document tasks', doc.id, err);
+          return [doc.id, []] as const;
+        }
+      })
+    );
+    setTasksByDocument(Object.fromEntries(entries));
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -76,7 +95,6 @@ const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({ kb, onDelete }) =
   const handleProcess = async (docId: string) => {
     try {
       await KnowledgeAPI.processDocument(docId);
-      // Refresh documents to show processing state
       await fetchDocuments();
     } catch (err) {
       console.error('Failed to start processing', err);
@@ -84,11 +102,26 @@ const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({ kb, onDelete }) =
     }
   };
 
+  const handleRetryTask = async (taskId: string) => {
+    try {
+      await KnowledgeAPI.retryTask(taskId);
+      await fetchDocuments();
+    } catch (err) {
+      console.error('Failed to retry processing task', err);
+      setError('Failed to retry processing task');
+    }
+  };
+
   const handleDeleteDoc = async (docId: string) => {
     if (!confirm('Are you sure you want to delete this document?')) return;
     try {
       await KnowledgeAPI.deleteDocument(docId);
-      setDocuments(docs => docs.filter(d => d.id !== docId));
+      setDocuments((docs) => docs.filter((d) => d.id !== docId));
+      setTasksByDocument((current) => {
+        const next = { ...current };
+        delete next[docId];
+        return next;
+      });
     } catch (err) {
       console.error('Delete failed', err);
       setError('Failed to delete document');
@@ -97,11 +130,16 @@ const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({ kb, onDelete }) =
 
   const getStatusIcon = (status: string) => {
     switch (status?.toLowerCase()) {
-      case 'success': return <CheckCircle2 size={16} className="text-emerald-500" />;
-      case 'running': return <Loader2 size={16} className="text-blue-500 animate-spin" />;
-      case 'queued': return <Clock size={16} className="text-amber-500" />;
-      case 'failed': return <AlertCircle size={16} className="text-red-500" />;
-      default: return <Clock size={16} className="text-gray-400" />;
+      case 'success':
+        return <CheckCircle2 size={16} className="text-emerald-500" />;
+      case 'running':
+        return <Loader2 size={16} className="text-blue-500 animate-spin" />;
+      case 'queued':
+        return <Clock size={16} className="text-amber-500" />;
+      case 'failed':
+        return <AlertCircle size={16} className="text-red-500" />;
+      default:
+        return <Clock size={16} className="text-gray-400" />;
     }
   };
 
@@ -114,13 +152,25 @@ const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({ kb, onDelete }) =
   };
 
   const displayName = (doc: KnowledgeDocument) => doc.docName || doc.fileName || 'Untitled document';
+  const latestTask = (docId: string) => tasksByDocument[docId]?.[0];
+
+  const taskStatusText = (task?: IngestionTask) => {
+    if (!task) return null;
+    if (task.status === 'RETRYING' && task.nextRunAt) {
+      return `Retry scheduled at ${new Date(task.nextRunAt).toLocaleString()}`;
+    }
+    if (task.status === 'RUNNING' && task.leaseUntil) {
+      return `Lease until ${new Date(task.leaseUntil).toLocaleTimeString()}`;
+    }
+    return task.status;
+  };
 
   return (
     <div className="flex flex-col h-full bg-white">
       <header className="px-8 py-6 border-b border-gray-100">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-2xl font-bold text-gray-900">{kb.name}</h2>
-          <button 
+          <button
             onClick={onDelete}
             className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
             title="Delete Knowledge Base"
@@ -174,7 +224,7 @@ const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({ kb, onDelete }) =
           ) : (
             <div className="grid gap-3">
               {documents.map((doc) => (
-                <div 
+                <div
                   key={doc.id}
                   className="flex items-center gap-4 p-4 border border-gray-100 rounded-2xl hover:border-gray-200 hover:shadow-sm transition-all group bg-white"
                 >
@@ -193,10 +243,21 @@ const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({ kb, onDelete }) =
                       <span>•</span>
                       <span>{new Date(doc.createTime).toLocaleDateString()}</span>
                     </div>
+                    {latestTask(doc.id)?.errorMessage && (
+                      <div className="mt-2 text-xs text-red-600 line-clamp-2">{latestTask(doc.id)?.errorMessage}</div>
+                    )}
+                    {taskStatusText(latestTask(doc.id)) && (
+                      <div className="mt-2 text-xs text-gray-500">
+                        Task: {taskStatusText(latestTask(doc.id))}{' '}
+                        {latestTask(doc.id)?.retryCount
+                          ? `(retry ${latestTask(doc.id)?.retryCount}/${latestTask(doc.id)?.maxRetries ?? 3})`
+                          : ''}
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     {!['queued', 'running', 'success'].includes(doc.status?.toLowerCase()) && (
-                      <button 
+                      <button
                         onClick={() => handleProcess(doc.id)}
                         className="p-2 text-gray-400 hover:text-black hover:bg-gray-100 rounded-lg transition-colors"
                         title="Start Processing"
@@ -204,7 +265,16 @@ const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({ kb, onDelete }) =
                         <Play size={18} />
                       </button>
                     )}
-                    <button 
+                    {latestTask(doc.id)?.status === 'FAILED' && (
+                      <button
+                        onClick={() => handleRetryTask(latestTask(doc.id)!.id)}
+                        className="p-2 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                        title="Retry Last Task"
+                      >
+                        <RotateCcw size={18} />
+                      </button>
+                    )}
+                    <button
                       onClick={() => handleDeleteDoc(doc.id)}
                       className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                       title="Delete Document"
@@ -220,6 +290,4 @@ const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({ kb, onDelete }) =
       </div>
     </div>
   );
-};
-
-export default KnowledgeBaseView;
+}

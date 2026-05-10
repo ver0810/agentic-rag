@@ -1,6 +1,7 @@
 package com.agenticrag.knowledge.service.impl;
 
 import com.agenticrag.common.ApiException;
+import com.agenticrag.ingestion.service.IngestionTaskService;
 import com.agenticrag.infra.ai.config.EmbeddingProperties;
 import com.agenticrag.infra.ai.rag.parser.DocumentParserFactory;
 import com.agenticrag.infra.ai.rag.vector.VectorStore;
@@ -16,12 +17,10 @@ import com.agenticrag.knowledge.dao.mapper.KnowledgeDocumentChunkLogMapper;
 import com.agenticrag.knowledge.dao.mapper.KnowledgeDocumentMapper;
 import com.agenticrag.knowledge.service.DocumentChunkingService;
 import com.agenticrag.knowledge.service.KnowledgeBaseService;
-import com.agenticrag.knowledge.service.KnowledgeDocumentProcessingService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -50,8 +49,8 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     private final KnowledgeEmbeddingService knowledgeEmbeddingService;
     private final VectorStore vectorStore;
     private final EmbeddingProperties embeddingProperties;
-    private final KnowledgeDocumentProcessingService knowledgeDocumentProcessingService;
     private final DocumentChunkingService documentChunkingService;
+    private final IngestionTaskService ingestionTaskService;
 
     public KnowledgeBaseServiceImpl(KnowledgeBaseMapper knowledgeBaseMapper,
                                     KnowledgeDocumentMapper knowledgeDocumentMapper,
@@ -62,8 +61,8 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
                                     KnowledgeEmbeddingService knowledgeEmbeddingService,
                                     VectorStore vectorStore,
                                     EmbeddingProperties embeddingProperties,
-                                    @Lazy KnowledgeDocumentProcessingService knowledgeDocumentProcessingService,
-                                    DocumentChunkingService documentChunkingService) {
+                                    DocumentChunkingService documentChunkingService,
+                                    IngestionTaskService ingestionTaskService) {
         this.knowledgeBaseMapper = knowledgeBaseMapper;
         this.knowledgeDocumentMapper = knowledgeDocumentMapper;
         this.knowledgeDocumentChunkLogMapper = knowledgeDocumentChunkLogMapper;
@@ -73,8 +72,8 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         this.knowledgeEmbeddingService = knowledgeEmbeddingService;
         this.vectorStore = vectorStore;
         this.embeddingProperties = embeddingProperties;
-        this.knowledgeDocumentProcessingService = knowledgeDocumentProcessingService;
         this.documentChunkingService = documentChunkingService;
+        this.ingestionTaskService = ingestionTaskService;
     }
 
     @Override
@@ -172,7 +171,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
     @Override
     @Transactional
-    public void enqueueProcessDocument(String docId, String userId) {
+    public String enqueueProcessDocument(String docId, String userId) {
         KnowledgeDocumentDao doc = requireDocument(docId, userId);
         String status = normalizeStatus(doc.getStatus());
         if ("queued".equals(status) || "running".equals(status)) {
@@ -181,7 +180,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         doc.setStatus("queued");
         doc.setUpdateTime(LocalDateTime.now());
         knowledgeDocumentMapper.updateById(doc);
-        knowledgeDocumentProcessingService.processAsync(docId);
+        return ingestionTaskService.enqueueDocumentTask(doc, userId);
     }
 
     @Override
@@ -275,6 +274,12 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             log.error("Failed to process document: {}. Error: {}", docId, e.getMessage(), e);
             throw new RuntimeException("Document processing failed: " + e.getMessage(), e);
         }
+    }
+
+    @Override
+    public Integer getDocumentChunkCount(String docId) {
+        KnowledgeDocumentDao doc = knowledgeDocumentMapper.selectById(docId);
+        return doc == null ? 0 : doc.getChunkCount();
     }
 
     private String calculateHash(String content) {

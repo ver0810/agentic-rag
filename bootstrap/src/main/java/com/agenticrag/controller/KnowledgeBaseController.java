@@ -1,6 +1,8 @@
 package com.agenticrag.controller;
 
 import com.agenticrag.infra.ai.storage.FileStorageService;
+import com.agenticrag.ingestion.dto.IngestionTaskDTO;
+import com.agenticrag.ingestion.service.IngestionTaskService;
 import com.agenticrag.knowledge.dao.entity.KnowledgeBaseDao;
 import com.agenticrag.knowledge.dao.entity.KnowledgeDocumentDao;
 import com.agenticrag.knowledge.service.KnowledgeBaseService;
@@ -20,11 +22,14 @@ public class KnowledgeBaseController {
 
     private final KnowledgeBaseService knowledgeBaseService;
     private final FileStorageService fileStorageService;
+    private final IngestionTaskService ingestionTaskService;
 
     public KnowledgeBaseController(KnowledgeBaseService knowledgeBaseService,
-                                   FileStorageService fileStorageService) {
+                                   FileStorageService fileStorageService,
+                                   IngestionTaskService ingestionTaskService) {
         this.knowledgeBaseService = knowledgeBaseService;
         this.fileStorageService = fileStorageService;
+        this.ingestionTaskService = ingestionTaskService;
     }
 
     @PostMapping
@@ -88,8 +93,16 @@ public class KnowledgeBaseController {
     @PostMapping("/documents/{docId}/process")
     public ResponseEntity<Map<String, String>> processDocument(@PathVariable String docId,
                                                                @CurrentUser String userId) {
-        knowledgeBaseService.enqueueProcessDocument(docId, userId);
-        return ResponseEntity.accepted().body(Map.of("message", "Document processing queued"));
+        String taskId = knowledgeBaseService.enqueueProcessDocument(docId, userId);
+        return ResponseEntity.accepted().body(Map.of(
+                "message", "Document processing queued",
+                "taskId", taskId));
+    }
+
+    @GetMapping("/documents/{docId}/tasks")
+    public ResponseEntity<List<IngestionTaskDTO>> listDocumentTasks(@PathVariable String docId,
+                                                                    @CurrentUser String userId) {
+        return ResponseEntity.ok(ingestionTaskService.listDocumentTasks(docId, userId));
     }
 
     private String getFileExtension(String fileName) {

@@ -21,7 +21,9 @@ public interface KnowledgeBaseService {
 
     void deleteDocument(String docId, String userId);
 
-    void enqueueProcessDocument(String docId, String userId);
+    String enqueueProcessDocument(String docId, String userId);
 
     void processDocument(String docId);
+
+    Integer getDocumentChunkCount(String docId);
 }

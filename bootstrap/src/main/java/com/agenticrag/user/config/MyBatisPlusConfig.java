@@ -5,10 +5,11 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 @MapperScan({
-        "com.agenticrag.user.dao.mapper",
+        "com.agenticrag.ingestion.dao.mapper",
         "com.agenticrag.knowledge.dao.mapper",
+        "com.agenticrag.rageval.dao.mapper",
         "com.agenticrag.ragtrace.dao.mapper",
-        "com.agenticrag.rageval.dao.mapper"
+        "com.agenticrag.user.dao.mapper",
 })
 public class MyBatisPlusConfig {
 }
