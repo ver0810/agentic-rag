@@ -144,17 +144,28 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         knowledgeDocumentMapper.updateById(doc);
 
         try {
+            log.info("Starting document processing: docId={}, fileUrl={}, fileType={}", docId, doc.getFileUrl(), doc.getFileType());
+            
             InputStream fileStream = fileStorageService.load(doc.getFileUrl());
+            log.info("File loaded successfully");
+            
             var parser = documentParserFactory.getParser(doc.getFileType());
+            log.info("Parser found: {}", parser.getClass().getSimpleName());
+            
             String content = parser.parse(fileStream, doc.getFileType());
+            log.info("Document parsed, content length: {}", content.length());
 
             List<String> chunks = splitText(content, CHUNK_SIZE, CHUNK_OVERLAP);
+            log.info("Text split into {} chunks", chunks.size());
 
             List<String> chunkContents = new ArrayList<>();
             for (String chunk : chunks) {
                 chunkContents.add(chunk);
             }
+            
+            log.info("Starting embedding for {} chunks...", chunkContents.size());
             List<float[]> embeddings = aiEmbeddingService.embedAll(chunkContents);
+            log.info("Embedding completed, got {} vectors", embeddings.size());
 
             for (int i = 0; i < chunks.size(); i++) {
                 KnowledgeChunkDao chunkDao = new KnowledgeChunkDao();
@@ -182,8 +193,8 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             doc.setStatus("failed");
             doc.setUpdateTime(LocalDateTime.now());
             knowledgeDocumentMapper.updateById(doc);
-            log.error("Failed to process document: {}", docId, e);
-            throw new RuntimeException("Document processing failed", e);
+            log.error("Failed to process document: {}. Error: {}", docId, e.getMessage(), e);
+            throw new RuntimeException("Document processing failed: " + e.getMessage(), e);
         }
     }
 

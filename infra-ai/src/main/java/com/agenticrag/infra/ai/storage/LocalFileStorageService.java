@@ -1,5 +1,6 @@
 package com.agenticrag.infra.ai.storage;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -9,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
+@Slf4j
 @Component
 public class LocalFileStorageService implements FileStorageService {
 
@@ -21,6 +23,7 @@ public class LocalFileStorageService implements FileStorageService {
             Path filePath = Path.of(basePath, path);
             Files.createDirectories(filePath.getParent());
             Files.copy(inputStream, filePath, StandardCopyOption.REPLACE_EXISTING);
+            log.info("Stored file: {}", filePath.toAbsolutePath());
             return path;
         } catch (IOException e) {
             throw new StorageException("Failed to store file: " + path, e);
@@ -30,9 +33,11 @@ public class LocalFileStorageService implements FileStorageService {
     @Override
     public InputStream load(String path) {
         try {
-            return Files.newInputStream(Path.of(basePath, path));
+            Path filePath = Path.of(basePath, path);
+            log.info("Loading file: {}", filePath.toAbsolutePath());
+            return Files.newInputStream(filePath);
         } catch (IOException e) {
-            throw new StorageException("Failed to load file: " + path, e);
+            throw new StorageException("Failed to load file: " + path + " (base-path: " + basePath + ")", e);
         }
     }
 
