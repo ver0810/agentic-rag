@@ -37,3 +37,4 @@ build/
 .mvn-local-settings.xml
 .mvn/codex-settings.xml
 **/effective-pom
+artifacts/

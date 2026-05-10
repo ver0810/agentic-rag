@@ -1,0 +1,43 @@
+{
+  "name": "sample-template",
+  "description": "RAG评测集模板。样例中的kbId可以留空，运行时通过kbIdOverride传入。",
+  "cases": [
+    {
+      "id": "exact-fact-01",
+      "kbId": "",
+      "query": "测试口令是什么？",
+      "topK": 5,
+      "expectedAnswerContains": [
+        "golden-wolf-2914"
+      ],
+      "expectedDocNames": [
+        "请替换成你的文档名.txt"
+      ],
+      "shouldRefuse": false
+    },
+    {
+      "id": "paragraph-summary-01",
+      "kbId": "",
+      "query": "枸杞对美容有什么作用？",
+      "topK": 5,
+      "expectedAnswerContains": [
+        "抗氧化",
+        "改善皮肤光泽",
+        "延缓皮肤老化"
+      ],
+      "expectedDocNames": [
+        "请替换成你的文档名.txt"
+      ],
+      "shouldRefuse": false
+    },
+    {
+      "id": "refusal-01",
+      "kbId": "",
+      "query": "今天上海天气怎么样？",
+      "topK": 5,
+      "expectedAnswerContains": [],
+      "expectedDocNames": [],
+      "shouldRefuse": true
+    }
+  ]
+}

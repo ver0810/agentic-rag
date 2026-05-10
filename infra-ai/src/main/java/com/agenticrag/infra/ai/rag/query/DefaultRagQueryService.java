@@ -27,6 +27,7 @@ public class DefaultRagQueryService implements RagQueryService {
     private final RagProperties ragProperties;
     private final RagQueryRewriteService ragQueryRewriteService;
     private final RagRerankService ragRerankService;
+    private final RagTraceRecorder ragTraceRecorder;
 
     private static final String DEFAULT_PROMPT_TEMPLATE = """
             你是一个严格基于证据回答问题的知识库助手。
@@ -46,13 +47,15 @@ public class DefaultRagQueryService implements RagQueryService {
                                    @Lazy AiChatService chatService,
                                    RagProperties ragProperties,
                                    RagQueryRewriteService ragQueryRewriteService,
-                                   RagRerankService ragRerankService) {
+                                   RagRerankService ragRerankService,
+                                   @Lazy RagTraceRecorder ragTraceRecorder) {
         this.embeddingService = embeddingService;
         this.vectorStore = vectorStore;
         this.chatService = chatService;
         this.ragProperties = ragProperties;
         this.ragQueryRewriteService = ragQueryRewriteService;
         this.ragRerankService = ragRerankService;
+        this.ragTraceRecorder = ragTraceRecorder;
     }
 
     @Override
@@ -78,66 +81,123 @@ public class DefaultRagQueryService implements RagQueryService {
     @Override
     public RagQueryResult queryDetailed(String query, String kbId, String userId, AiRuntimeContext context, int topK) {
         log.info("RAG query: kbId={}, query={}", kbId, query);
-        String rewrittenQuery = ragProperties.isRewriteEnabled()
-                ? ragQueryRewriteService.rewrite(query, userId, context)
-                : query;
-
-        float[] queryEmbedding = embeddingService.embed(rewrittenQuery);
         int effectiveTopK = topK > 0 ? topK : ragProperties.getDefaultTopK();
-        Map<String, Object> filter = Map.of("kbId", kbId);
+        String traceId = ragTraceRecorder.startRun(
+                "rag_query",
+                "RagQueryService.queryDetailed",
+                "rag:" + kbId + ":" + (userId == null ? "anonymous" : userId),
+                userId,
+                Map.of("kbId", kbId, "query", query, "topK", effectiveTopK));
+        try {
+            String rewrittenQuery = query;
+            if (ragProperties.isRewriteEnabled()) {
+                String rewriteNodeId = ragTraceRecorder.startNode(traceId, "rewrite", "query_rewrite", Map.of("query", query));
+                try {
+                    rewrittenQuery = ragQueryRewriteService.rewrite(query, userId, context);
+                    ragTraceRecorder.completeNode(traceId, rewriteNodeId, Map.of("rewrittenQuery", rewrittenQuery));
+                } catch (Exception ex) {
+                    ragTraceRecorder.failNode(traceId, rewriteNodeId, ex.getMessage(), Map.of());
+                    throw ex;
+                }
+            }
 
-        List<VectorStore.VectorSearchResult> vectorResults = vectorStore.search(
-                queryEmbedding,
-                Math.max(effectiveTopK, ragProperties.getVectorTopK()),
-                filter);
-        List<VectorStore.VectorSearchResult> results = vectorResults;
-        if (ragProperties.isHybridEnabled()) {
-            List<VectorStore.VectorSearchResult> keywordResults = vectorStore.keywordSearch(
+            String retrieveNodeId = ragTraceRecorder.startNode(traceId, "retrieve", "hybrid_retrieve", Map.of("rewrittenQuery", rewrittenQuery));
+            float[] queryEmbedding;
+            List<VectorStore.VectorSearchResult> results;
+            try {
+                queryEmbedding = embeddingService.embed(rewrittenQuery);
+                Map<String, Object> filter = Map.of("kbId", kbId);
+                List<VectorStore.VectorSearchResult> vectorResults = vectorStore.search(
+                        queryEmbedding,
+                        Math.max(effectiveTopK, ragProperties.getVectorTopK()),
+                        filter);
+                results = vectorResults;
+                int keywordCount = 0;
+                if (ragProperties.isHybridEnabled()) {
+                    List<VectorStore.VectorSearchResult> keywordResults = vectorStore.keywordSearch(
+                            rewrittenQuery,
+                            Math.max(effectiveTopK, ragProperties.getKeywordTopK()),
+                            filter);
+                    keywordCount = keywordResults.size();
+                    results = mergeResults(vectorResults, keywordResults, effectiveTopK);
+                } else {
+                    results = vectorResults.stream()
+                            .sorted(Comparator.comparing(VectorStore.VectorSearchResult::score).reversed())
+                            .limit(effectiveTopK)
+                            .toList();
+                }
+                results = results.stream()
+                        .filter(r -> r.score() >= ragProperties.getSimilarityThreshold())
+                        .collect(Collectors.toList());
+                ragTraceRecorder.completeNode(traceId, retrieveNodeId, Map.of(
+                        "vectorResultCount", vectorResults.size(),
+                        "keywordResultCount", keywordCount,
+                        "filteredResultCount", results.size()));
+            } catch (Exception ex) {
+                ragTraceRecorder.failNode(traceId, retrieveNodeId, ex.getMessage(), Map.of());
+                throw ex;
+            }
+
+            if (ragProperties.isRerankEnabled()) {
+                String rerankNodeId = ragTraceRecorder.startNode(traceId, "rerank", "lexical_rerank", Map.of("candidateCount", results.size()));
+                try {
+                    results = ragRerankService.rerank(rewrittenQuery, results, effectiveTopK);
+                    ragTraceRecorder.completeNode(traceId, rerankNodeId, Map.of("rerankedCount", results.size()));
+                } catch (Exception ex) {
+                    ragTraceRecorder.failNode(traceId, rerankNodeId, ex.getMessage(), Map.of());
+                    throw ex;
+                }
+            } else {
+                results = results.stream().limit(effectiveTopK).toList();
+            }
+
+            if (results.isEmpty()) {
+                log.info("No relevant context found for query: {}", query);
+                RagQueryResult emptyResult = new RagQueryResult(
+                        "抱歉，我无法根据现有的知识库内容回答您的问题。请尝试换个问题，或者确认知识库中是否有相关信息。",
+                        traceId,
+                        rewrittenQuery,
+                        List.of(),
+                        List.of());
+                ragTraceRecorder.completeRun(traceId, Map.of("rewrittenQuery", rewrittenQuery, "answerState", "empty"));
+                return emptyResult;
+            }
+
+            String retrievedContext = results.stream()
+                    .limit(ragProperties.getMaxContextChunks())
+                    .map(this::toEvidenceBlock)
+                    .collect(Collectors.joining("\n\n"));
+
+            String prompt = String.format(DEFAULT_PROMPT_TEMPLATE, retrievedContext, query);
+
+            log.info("RAG query found {} relevant chunks, generating answer...", results.size());
+
+            String generateNodeId = ragTraceRecorder.startNode(traceId, "generate", "answer_generation", Map.of("contextChunkCount", Math.min(results.size(), ragProperties.getMaxContextChunks())));
+            String answer;
+            try {
+                String conversationId = "rag:" + kbId + ":" + (userId == null ? "anonymous" : userId);
+                answer = chatService.call(AiChatScene.RAG_QA, prompt, context, conversationId, userId, null);
+                ragTraceRecorder.completeNode(traceId, generateNodeId, Map.of("answerLength", answer.length()));
+            } catch (Exception ex) {
+                ragTraceRecorder.failNode(traceId, generateNodeId, ex.getMessage(), Map.of());
+                throw ex;
+            }
+
+            RagQueryResult result = new RagQueryResult(
+                    answer,
+                    traceId,
                     rewrittenQuery,
-                    Math.max(effectiveTopK, ragProperties.getKeywordTopK()),
-                    filter);
-            results = mergeResults(vectorResults, keywordResults, effectiveTopK);
-        } else {
-            results = vectorResults.stream()
-                    .sorted(Comparator.comparing(VectorStore.VectorSearchResult::score).reversed())
-                    .limit(effectiveTopK)
-                    .toList();
+                    results.stream().map(this::toCitation).toList(),
+                    results.stream().map(this::toRetrievedChunk).toList());
+            ragTraceRecorder.completeRun(traceId, Map.of(
+                    "rewrittenQuery", rewrittenQuery,
+                    "citationCount", result.citations().size(),
+                    "retrievedChunkCount", result.retrievedChunks().size()));
+            return result;
+        } catch (Exception ex) {
+            ragTraceRecorder.failRun(traceId, ex.getMessage(), Map.of("kbId", kbId));
+            throw ex;
         }
-
-        results = results.stream()
-                .filter(r -> r.score() >= ragProperties.getSimilarityThreshold())
-                .collect(Collectors.toList());
-        if (ragProperties.isRerankEnabled()) {
-            results = ragRerankService.rerank(rewrittenQuery, results, effectiveTopK);
-        } else {
-            results = results.stream().limit(effectiveTopK).toList();
-        }
-
-        if (results.isEmpty()) {
-            log.info("No relevant context found for query: {}", query);
-            return new RagQueryResult(
-                    "抱歉，我无法根据现有的知识库内容回答您的问题。请尝试换个问题，或者确认知识库中是否有相关信息。",
-                    rewrittenQuery,
-                    List.of(),
-                    List.of());
-        }
-
-        String retrievedContext = results.stream()
-                .limit(ragProperties.getMaxContextChunks())
-                .map(this::toEvidenceBlock)
-                .collect(Collectors.joining("\n\n"));
-
-        String prompt = String.format(DEFAULT_PROMPT_TEMPLATE, retrievedContext, query);
-
-        log.info("RAG query found {} relevant chunks, generating answer...", results.size());
-
-        String conversationId = "rag:" + kbId + ":" + (userId == null ? "anonymous" : userId);
-        String answer = chatService.call(AiChatScene.RAG_QA, prompt, context, conversationId, userId, null);
-        return new RagQueryResult(
-                answer,
-                rewrittenQuery,
-                results.stream().map(this::toCitation).toList(),
-                results.stream().map(this::toRetrievedChunk).toList());
     }
 
     private RagQueryResult.Citation toCitation(VectorStore.VectorSearchResult result) {

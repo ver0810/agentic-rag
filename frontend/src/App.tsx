@@ -32,7 +32,8 @@ import {
   Trash2,
   Database,
   MessageSquare,
-  Library
+  Library,
+  Activity
 } from 'lucide-react'
 import Login from './pages/Login'
 import Register from './pages/Register'
@@ -44,6 +45,7 @@ import { KnowledgeAPI } from './api/knowledge'
 import type { KnowledgeBase } from './api/knowledge'
 import KnowledgeBaseView from './components/KnowledgeBaseView'
 import MessageContent from './components/MessageContent'
+import ObservabilityView from './components/ObservabilityView'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -97,7 +99,7 @@ function ChatInterface() {
   const [editingTitle, setEditingTitle] = useState('')
   
   // New RAG / KB States
-  const [sidebarTab, setSidebarTab] = useState<'chats' | 'knowledge'>('chats')
+  const [sidebarTab, setSidebarTab] = useState<'chats' | 'knowledge' | 'observability'>('chats')
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
   const [activeKb, setActiveKb] = useState<KnowledgeBase | null>(null)
   const [selectedKbId, setSelectedKbId] = useState<string | null>(null)
@@ -408,7 +410,19 @@ function ChatInterface() {
               }`}
             >
               <Library size={14} />
-              <span>Knowledge</span>
+              <span>KB</span>
+            </button>
+            <button
+              onClick={() => {
+                setSidebarTab('observability')
+                setActiveKb(null)
+              }}
+              className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                sidebarTab === 'observability' ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Activity size={14} />
+              <span>Trace</span>
             </button>
           </div>
 
@@ -513,7 +527,7 @@ function ChatInterface() {
                 )}
               </div>
             </>
-          ) : (
+          ) : sidebarTab === 'knowledge' ? (
             <>
               <button 
                 className="flex items-center justify-between w-full p-2 text-sm font-medium hover:bg-[#ececec] rounded-lg transition-colors group"
@@ -547,6 +561,24 @@ function ChatInterface() {
                     </button>
                   ))
                 )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-6 space-y-4">
+                <div className="w-12 h-12 bg-white border border-[#e5e5e5] rounded-xl flex items-center justify-center shadow-sm text-gray-400">
+                  <Activity size={24} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900">Observability</h3>
+                  <p className="text-xs text-gray-500 mt-1">Trace every step of your RAG pipeline in real-time.</p>
+                </div>
+                <button 
+                  onClick={() => setSidebarTab('observability')}
+                  className="w-full py-2 bg-black text-white text-xs font-bold rounded-lg hover:bg-gray-800 transition-colors shadow-sm active:scale-95 transition-all"
+                >
+                  Open Dashboard
+                </button>
               </div>
             </>
           )}
@@ -802,7 +834,9 @@ function ChatInterface() {
         </header>
 
         <div className="flex-1 overflow-y-auto scrollbar-hide pt-4">
-          {activeKb ? (
+          {sidebarTab === 'observability' ? (
+            <ObservabilityView />
+          ) : activeKb ? (
             <KnowledgeBaseView 
               kb={activeKb} 
               onDelete={() => handleDeleteKb(activeKb.id)} 
@@ -892,7 +926,7 @@ function ChatInterface() {
           )}
         </div>
 
-        {!activeKb && (
+        {sidebarTab !== 'observability' && !activeKb && (
           <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-white via-white/95 to-transparent pt-10 pb-6 px-4">
             <div className="max-w-3xl mx-auto relative group">
               <form onSubmit={handleSubmit} className="relative bg-white border border-[#e5e5e5] rounded-2xl shadow-[0_0_20px_rgba(0,0,0,0.05)] focus-within:border-gray-300 transition-all overflow-hidden">

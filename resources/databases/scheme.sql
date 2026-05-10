@@ -380,6 +380,57 @@ CREATE TABLE t_rag_trace_node
 );
 COMMENT ON TABLE t_rag_trace_node IS 'Trace 节点记录表';
 
+CREATE TABLE t_rag_eval_run
+(
+    id                VARCHAR(20) NOT NULL PRIMARY KEY,
+    run_id            VARCHAR(64) NOT NULL,
+    dataset_name      VARCHAR(128) NOT NULL,
+    kb_id             VARCHAR(20),
+    user_id           VARCHAR(20) NOT NULL,
+    top_k             INTEGER,
+    total_count       INTEGER     NOT NULL DEFAULT 0,
+    passed_count      INTEGER     NOT NULL DEFAULT 0,
+    failed_count      INTEGER     NOT NULL DEFAULT 0,
+    pass_rate         DOUBLE PRECISION,
+    answer_accuracy   DOUBLE PRECISION,
+    citation_hit_rate DOUBLE PRECISION,
+    refusal_accuracy  DOUBLE PRECISION,
+    executed_at       TIMESTAMP   NOT NULL,
+    create_time       TIMESTAMP            DEFAULT CURRENT_TIMESTAMP,
+    update_time       TIMESTAMP            DEFAULT CURRENT_TIMESTAMP,
+    deleted           SMALLINT             DEFAULT 0,
+    CONSTRAINT uk_rag_eval_run_id UNIQUE (run_id)
+);
+CREATE INDEX idx_rag_eval_run_user ON t_rag_eval_run (user_id, executed_at);
+CREATE INDEX idx_rag_eval_run_dataset ON t_rag_eval_run (dataset_name, executed_at);
+COMMENT ON TABLE t_rag_eval_run IS 'RAG评测执行记录表';
+
+CREATE TABLE t_rag_eval_case_result
+(
+    id                         VARCHAR(20)  NOT NULL PRIMARY KEY,
+    eval_run_id                VARCHAR(64)  NOT NULL,
+    case_id                    VARCHAR(128) NOT NULL,
+    kb_id                      VARCHAR(20),
+    query_text                 TEXT         NOT NULL,
+    trace_id                   VARCHAR(64),
+    rewritten_query            TEXT,
+    passed                     SMALLINT     NOT NULL DEFAULT 0,
+    answer_passed              SMALLINT     NOT NULL DEFAULT 0,
+    citation_passed            SMALLINT     NOT NULL DEFAULT 0,
+    refusal_passed             SMALLINT     NOT NULL DEFAULT 0,
+    expected_answer_term_count INTEGER      NOT NULL DEFAULT 0,
+    matched_answer_term_count  INTEGER      NOT NULL DEFAULT 0,
+    expected_doc_names         TEXT,
+    matched_doc_names          TEXT,
+    answer_text                TEXT,
+    failure_reason             VARCHAR(255),
+    create_time                TIMESTAMP             DEFAULT CURRENT_TIMESTAMP,
+    update_time                TIMESTAMP             DEFAULT CURRENT_TIMESTAMP,
+    deleted                    SMALLINT              DEFAULT 0
+);
+CREATE INDEX idx_rag_eval_case_run ON t_rag_eval_case_result (eval_run_id, case_id);
+COMMENT ON TABLE t_rag_eval_case_result IS 'RAG评测样例结果表';
+
 -- ============================================
 -- Ingestion Pipeline Tables
 -- ============================================
