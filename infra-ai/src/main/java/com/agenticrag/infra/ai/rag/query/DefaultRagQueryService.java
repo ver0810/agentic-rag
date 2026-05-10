@@ -1,10 +1,9 @@
 package com.agenticrag.infra.ai.rag.query;
 
 import com.agenticrag.infra.ai.model.AiChatScene;
-import com.agenticrag.infra.ai.model.AiRuntimeContext;
 import com.agenticrag.infra.ai.rag.vector.VectorStore;
 import com.agenticrag.infra.ai.service.AiChatService;
-import com.agenticrag.infra.ai.service.AiEmbeddingService;
+import com.agenticrag.infra.ai.service.KnowledgeEmbeddingService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -16,7 +15,7 @@ import java.util.stream.Collectors;
 @Service
 public class DefaultRagQueryService implements RagQueryService {
 
-    private final AiEmbeddingService embeddingService;
+    private final KnowledgeEmbeddingService embeddingService;
     private final VectorStore vectorStore;
     private final AiChatService chatService;
 
@@ -34,7 +33,7 @@ public class DefaultRagQueryService implements RagQueryService {
             回答：
             """;
 
-    public DefaultRagQueryService(AiEmbeddingService embeddingService,
+    public DefaultRagQueryService(KnowledgeEmbeddingService embeddingService,
                                    VectorStore vectorStore,
                                    AiChatService chatService) {
         this.embeddingService = embeddingService;
@@ -53,7 +52,7 @@ public class DefaultRagQueryService implements RagQueryService {
 
         float[] queryEmbedding = embeddingService.embed(query);
 
-        List<VectorStore.VectorSearchResult> results = vectorStore.search(queryEmbedding, topK);
+        List<VectorStore.VectorSearchResult> results = vectorStore.search(queryEmbedding, topK, Map.of("kbId", kbId));
 
         results = results.stream()
                 .filter(r -> r.score() >= SIMILARITY_THRESHOLD)

@@ -1,6 +1,8 @@
 package com.agenticrag.knowledge.service.impl;
 
 import com.agenticrag.infra.ai.rag.parser.DocumentParserFactory;
+import com.agenticrag.infra.ai.rag.vector.VectorStore;
+import com.agenticrag.infra.ai.config.EmbeddingProperties;
 import com.agenticrag.infra.ai.service.KnowledgeEmbeddingService;
 import com.agenticrag.infra.ai.storage.FileStorageService;
 import com.agenticrag.knowledge.dao.entity.KnowledgeBaseDao;
@@ -11,6 +13,7 @@ import com.agenticrag.knowledge.dao.mapper.KnowledgeChunkMapper;
 import com.agenticrag.knowledge.dao.mapper.KnowledgeDocumentMapper;
 import com.agenticrag.knowledge.service.KnowledgeBaseService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,7 +22,9 @@ import java.io.InputStream;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -31,6 +36,8 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     private final FileStorageService fileStorageService;
     private final DocumentParserFactory documentParserFactory;
     private final KnowledgeEmbeddingService knowledgeEmbeddingService;
+    private final VectorStore vectorStore;
+    private final EmbeddingProperties embeddingProperties;
 
     private static final int CHUNK_SIZE = 500;
     private static final int CHUNK_OVERLAP = 50;
@@ -40,13 +47,17 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
                                     KnowledgeChunkMapper knowledgeChunkMapper,
                                     FileStorageService fileStorageService,
                                     DocumentParserFactory documentParserFactory,
-                                    KnowledgeEmbeddingService knowledgeEmbeddingService) {
+                                    KnowledgeEmbeddingService knowledgeEmbeddingService,
+                                    VectorStore vectorStore,
+                                    EmbeddingProperties embeddingProperties) {
         this.knowledgeBaseMapper = knowledgeBaseMapper;
         this.knowledgeDocumentMapper = knowledgeDocumentMapper;
         this.knowledgeChunkMapper = knowledgeChunkMapper;
         this.fileStorageService = fileStorageService;
         this.documentParserFactory = documentParserFactory;
         this.knowledgeEmbeddingService = knowledgeEmbeddingService;
+        this.vectorStore = vectorStore;
+        this.embeddingProperties = embeddingProperties;
     }
 
     @Override
@@ -80,6 +91,16 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             kb.setDeleted(1);
             kb.setUpdateTime(LocalDateTime.now());
             knowledgeBaseMapper.updateById(kb);
+
+            knowledgeDocumentMapper.update(
+                    null,
+                    new LambdaUpdateWrapper<KnowledgeDocumentDao>()
+                            .eq(KnowledgeDocumentDao::getKbId, id)
+                            .set(KnowledgeDocumentDao::getDeleted, 1));
+            knowledgeChunkMapper.delete(
+                    new LambdaQueryWrapper<KnowledgeChunkDao>()
+                            .eq(KnowledgeChunkDao::getKbId, id));
+            vectorStore.deleteByKbId(id);
         }
     }
 
@@ -126,6 +147,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             knowledgeChunkMapper.delete(
                     new LambdaQueryWrapper<KnowledgeChunkDao>()
                             .eq(KnowledgeChunkDao::getDocId, docId));
+            vectorStore.deleteByDocId(docId);
 
             fileStorageService.delete(doc.getFileUrl());
         }
@@ -162,10 +184,15 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             for (String chunk : chunks) {
                 chunkContents.add(chunk);
             }
-            
+
             log.info("Starting embedding for {} chunks...", chunkContents.size());
             List<float[]> embeddings = knowledgeEmbeddingService.embedAll(chunkContents);
             log.info("Embedding completed, got {} vectors", embeddings.size());
+
+            knowledgeChunkMapper.delete(
+                    new LambdaQueryWrapper<KnowledgeChunkDao>()
+                            .eq(KnowledgeChunkDao::getDocId, docId));
+            vectorStore.deleteByDocId(docId);
 
             for (int i = 0; i < chunks.size(); i++) {
                 KnowledgeChunkDao chunkDao = new KnowledgeChunkDao();
@@ -181,6 +208,12 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
                 chunkDao.setUpdateTime(LocalDateTime.now());
                 chunkDao.setDeleted(0);
                 knowledgeChunkMapper.insert(chunkDao);
+
+                vectorStore.store(
+                        chunkDao.getId(),
+                        chunkDao.getContent(),
+                        embeddings.get(i),
+                        buildVectorMetadata(doc, chunkDao));
             }
 
             doc.setStatus("success");
@@ -226,5 +259,17 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private Map<String, Object> buildVectorMetadata(KnowledgeDocumentDao doc, KnowledgeChunkDao chunkDao) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("kbId", doc.getKbId());
+        metadata.put("docId", doc.getId());
+        metadata.put("chunkId", chunkDao.getId());
+        metadata.put("chunkIndex", chunkDao.getChunkIndex());
+        metadata.put("docName", doc.getDocName());
+        metadata.put("createdBy", doc.getCreatedBy());
+        metadata.put("embeddingModel", embeddingProperties.getModel());
+        return metadata;
     }
 }

@@ -25,7 +25,7 @@ public class PgVectorStore implements VectorStore {
         String vectorStr = formatVector(embedding);
         
         jdbcTemplate.update(
-                "INSERT INTO t_knowledge_vector (id, content, metadata, embedding) VALUES (?, ?::jsonb, ?::vector) " +
+                "INSERT INTO t_knowledge_vector (id, content, metadata, embedding) VALUES (?, ?, ?::jsonb, ?::vector) " +
                 "ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, metadata = EXCLUDED.metadata, embedding = EXCLUDED.embedding",
                 chunkId, content, metadataJson, vectorStr);
     }
@@ -38,20 +38,28 @@ public class PgVectorStore implements VectorStore {
     @Override
     public List<VectorSearchResult> search(float[] queryEmbedding, int topK, Map<String, Object> filter) {
         String vectorStr = formatVector(queryEmbedding);
-        
-        String sql = "SELECT id, content, 1 - (embedding <=> ?::vector) as score, metadata " +
-                     "FROM t_knowledge_vector " +
-                     "ORDER BY embedding <=> ?::vector " +
-                     "LIMIT ?";
-        
-        return jdbcTemplate.query(sql, (rs, rowNum) -> {
+
+        StringBuilder sql = new StringBuilder(
+                "SELECT id, content, 1 - (embedding <=> ?::vector) as score, metadata " +
+                "FROM t_knowledge_vector");
+        Object[] args;
+        if (filter != null && !filter.isEmpty()) {
+            sql.append(" WHERE metadata @> ?::jsonb");
+            sql.append(" ORDER BY embedding <=> ?::vector LIMIT ?");
+            args = new Object[]{vectorStr, serializeMetadata(filter), vectorStr, topK};
+        } else {
+            sql.append(" ORDER BY embedding <=> ?::vector LIMIT ?");
+            args = new Object[]{vectorStr, vectorStr, topK};
+        }
+
+        return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> {
             String id = rs.getString("id");
             String content = rs.getString("content");
             float score = rs.getFloat("score");
             String metadataStr = rs.getString("metadata");
             Map<String, Object> metadata = deserializeMetadata(metadataStr);
             return new VectorSearchResult(id, content, score, metadata);
-        }, vectorStr, vectorStr, topK);
+        }, args);
     }
 
     @Override
