@@ -19,7 +19,6 @@ import {
   XCircle,
   RotateCcw,
   Filter,
-  ArrowDownToLine,
   Layers,
   User
 } from 'lucide-react';
@@ -33,7 +32,7 @@ const nodeTypeStyles: Record<string, { icon: React.ReactNode; color: string; bg:
 };
 
 import { ObservabilityAPI } from '../api/observability';
-import type { RagAlertDispatchResult, RagObservabilitySummary } from '../api/observability';
+import type { RagAlertDispatchResult, RagObservabilityAlert, RagObservabilitySummary } from '../api/observability';
 import { TraceAPI } from '../api/trace';
 import type { RagTraceRun } from '../api/trace';
 
@@ -51,8 +50,9 @@ const safeParse = (data?: string) => {
 };
 
 export default function ObservabilityView({}: ObservabilityViewProps) {
-  const [metrics, setMetrics] = useState<RagObservabilitySummary | null>(null);
-  const [activeAlerts, setActiveAlerts] = useState<RagAlertDispatchResult[]>([]);
+  const [summary, setSummary] = useState<RagObservabilitySummary | null>(null);
+  const [dispatchResult, setDispatchResult] = useState<RagAlertDispatchResult | null>(null);
+  const [activeAlerts, setActiveAlerts] = useState<RagObservabilityAlert[]>([]);
   const [traces, setTraces] = useState<RagTraceRun[]>([]);
   const [selectedTrace, setSelectedTrace] = useState<RagTraceRun | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -66,18 +66,27 @@ export default function ObservabilityView({}: ObservabilityViewProps) {
   const fetchDashboard = async () => {
     setIsLoading(true);
     try {
-      const [metricsRes, alertsRes, tracesRes] = await Promise.all([
-        ObservabilityAPI.getSummary(),
-        ObservabilityAPI.listAlerts(),
+      const [summaryRes, tracesRes] = await Promise.all([
+        ObservabilityAPI.summary(),
         TraceAPI.list(50)
       ]);
-      setMetrics(metricsRes.data);
-      setActiveAlerts(alertsRes.data);
+      setSummary(summaryRes.data);
+      setActiveAlerts((summaryRes.data.alerts || []).filter(alert => alert.status === 'ACTIVE'));
       setTraces(tracesRes.data);
     } catch (err) {
       console.error('Failed to fetch observability dashboard', err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleDispatchAlerts = async () => {
+    try {
+      const response = await ObservabilityAPI.dispatchAlerts(24, 24, true);
+      setDispatchResult(response.data);
+      await fetchDashboard();
+    } catch (err) {
+      console.error('Failed to dispatch alerts', err);
     }
   };
 
@@ -106,6 +115,8 @@ export default function ObservabilityView({}: ObservabilityViewProps) {
     return <TraceDetailView trace={selectedTrace} onBack={() => setSelectedTrace(null)} />;
   }
 
+  const metrics = summary?.metrics;
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 space-y-10">
       <div className="flex items-center justify-between">
@@ -120,6 +131,13 @@ export default function ObservabilityView({}: ObservabilityViewProps) {
           >
             <RefreshCw size={20} className={isLoading ? 'animate-spin' : ''} />
           </button>
+          <button
+            onClick={() => void handleDispatchAlerts()}
+            className="flex items-center gap-2 px-5 py-2.5 bg-black text-white rounded-xl text-sm font-semibold hover:bg-gray-800 transition-all shadow-lg shadow-black/10 active:scale-95"
+          >
+            <Send size={18} />
+            Dispatch Alerts
+          </button>
           {selectedForCompare.length >= 2 && (
             <button
               onClick={() => setViewMode('compare')}
@@ -132,9 +150,23 @@ export default function ObservabilityView({}: ObservabilityViewProps) {
         </div>
       </div>
 
+      {dispatchResult && (
+        <div className={`p-4 rounded-2xl border text-sm ${
+          dispatchResult.dispatched
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+            : 'border-amber-200 bg-amber-50 text-amber-700'
+        }`}>
+          {dispatchResult.dispatched
+            ? `Dispatched ${dispatchResult.activeAlertCount} alerts${dispatchResult.destination ? ` to ${dispatchResult.destination}` : ''}.`
+            : dispatchResult.notificationsEnabled
+              ? `No dispatch performed. Active alerts: ${dispatchResult.activeAlertCount}.`
+              : 'Alert notifications are disabled.'}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <MetricCard icon={<Activity size={16} />} label="System Health" value={metrics?.healthStatus === 'HEALTHY' ? 'Healthy' : 'Warning'} sub="Based on recent query success rate" />
-        <MetricCard icon={<Clock size={16} />} label="Avg Latency" value={formatDuration(metrics?.averageLatencyMs ?? 0)} sub="End-to-end RAG response time" />
+        <MetricCard icon={<Activity size={16} />} label="System Health" value={activeAlerts.length === 0 ? 'Healthy' : 'Warning'} sub="Based on recent query success rate" />
+        <MetricCard icon={<Clock size={16} />} label="Avg Latency" value={formatDuration(metrics?.averageResponseTimeMs ?? 0)} sub="End-to-end RAG response time" />
         <MetricCard icon={<BarChart3 size={16} />} label="Estimated Cost" value={formatCost(metrics?.estimatedTotalCost)} sub={`chat ${formatCost(metrics?.estimatedChatCost)} · embed ${formatCost(metrics?.estimatedEmbeddingCost)}`} />
       </div>
 
@@ -151,15 +183,11 @@ export default function ObservabilityView({}: ObservabilityViewProps) {
                 <p className="text-sm text-gray-500 font-medium">All systems operational. No active alerts.</p>
               </div>
             ) : (
-              activeAlerts.map((alert, idx) => (
-                <div key={idx} className="p-4 rounded-2xl border border-gray-100 bg-white shadow-sm flex flex-col gap-3">
+              activeAlerts.map((alert) => (
+                <div key={alert.code} className="p-4 rounded-2xl border border-gray-100 bg-white shadow-sm flex flex-col gap-3">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="font-bold text-gray-900">{alert.metricName}</span>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                      alert.status === 'CRITICAL'
-                        ? 'bg-red-100 text-red-600'
-                        : 'bg-amber-100 text-amber-600'
-                    }`}>
+                    <span className="font-bold text-gray-900">{alert.message}</span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-red-100 text-red-600">
                       {alert.status}
                     </span>
                   </div>
@@ -410,7 +438,7 @@ function TraceDetailView({ trace, onBack }: { trace: RagTraceRun; onBack: () => 
               </span>
             </div>
             <div className="relative border-l-2 border-dashed border-gray-100 ml-4 pl-10 space-y-10">
-              {trace.nodes.map((node, idx) => {
+              {trace.nodes.map((node) => {
                 const style = nodeTypeStyles[node.nodeType] || nodeTypeStyles.default;
                 return (
                   <div key={node.nodeId} className="relative group">
