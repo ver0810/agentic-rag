@@ -55,6 +55,16 @@ public class DefaultRagQueryService implements RagQueryService {
 
     @Override
     public String query(String query, String kbId, String userId, AiRuntimeContext context, int topK) {
+        return queryDetailed(query, kbId, userId, context, topK).answer();
+    }
+
+    @Override
+    public RagQueryResult queryDetailed(String query, String kbId, String userId, int topK) {
+        return queryDetailed(query, kbId, userId, null, topK);
+    }
+
+    @Override
+    public RagQueryResult queryDetailed(String query, String kbId, String userId, AiRuntimeContext context, int topK) {
         log.info("RAG query: kbId={}, query={}", kbId, query);
 
         float[] queryEmbedding = embeddingService.embed(query);
@@ -67,7 +77,10 @@ public class DefaultRagQueryService implements RagQueryService {
 
         if (results.isEmpty()) {
             log.info("No relevant context found for query: {}", query);
-            return "抱歉，我无法根据现有的知识库内容回答您的问题。请尝试换个问题，或者确认知识库中是否有相关信息。";
+            return new RagQueryResult(
+                    "抱歉，我无法根据现有的知识库内容回答您的问题。请尝试换个问题，或者确认知识库中是否有相关信息。",
+                    List.of(),
+                    List.of());
         }
 
         String retrievedContext = results.stream()
@@ -79,6 +92,57 @@ public class DefaultRagQueryService implements RagQueryService {
         log.info("RAG query found {} relevant chunks, generating answer...", results.size());
 
         String conversationId = "rag:" + kbId + ":" + (userId == null ? "anonymous" : userId);
-        return chatService.call(AiChatScene.RAG_QA, prompt, context, conversationId, userId, null);
+        String answer = chatService.call(AiChatScene.RAG_QA, prompt, context, conversationId, userId, null);
+        return new RagQueryResult(
+                answer,
+                results.stream().map(this::toCitation).toList(),
+                results.stream().map(this::toRetrievedChunk).toList());
+    }
+
+    private RagQueryResult.Citation toCitation(VectorStore.VectorSearchResult result) {
+        return new RagQueryResult.Citation(
+                result.chunkId(),
+                metadataValue(result, "docId"),
+                metadataValue(result, "docName"),
+                metadataIntegerValue(result, "chunkIndex"),
+                result.score(),
+                abbreviate(result.content(), 200));
+    }
+
+    private RagQueryResult.RetrievedChunk toRetrievedChunk(VectorStore.VectorSearchResult result) {
+        return new RagQueryResult.RetrievedChunk(
+                result.chunkId(),
+                metadataValue(result, "docId"),
+                metadataValue(result, "docName"),
+                metadataIntegerValue(result, "chunkIndex"),
+                result.score(),
+                result.content());
+    }
+
+    private String metadataValue(VectorStore.VectorSearchResult result, String key) {
+        Object value = result.metadata().get(key);
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private Integer metadataIntegerValue(VectorStore.VectorSearchResult result, String key) {
+        Object value = result.metadata().get(key);
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Integer.parseInt(text);
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private String abbreviate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength);
     }
 }

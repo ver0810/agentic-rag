@@ -28,6 +28,20 @@ const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({ kb, onDelete }) =
     fetchDocuments();
   }, [kb.id]);
 
+  useEffect(() => {
+    const hasActiveProcessing = documents.some((doc) => {
+      const status = doc.status?.toLowerCase();
+      return status === 'queued' || status === 'running';
+    });
+    if (!hasActiveProcessing) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      fetchDocuments();
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [documents, kb.id]);
+
   const fetchDocuments = async () => {
     setIsLoading(true);
     try {
@@ -82,10 +96,11 @@ const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({ kb, onDelete }) =
   };
 
   const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'COMPLETED': return <CheckCircle2 size={16} className="text-emerald-500" />;
-      case 'PROCESSING': return <Loader2 size={16} className="text-blue-500 animate-spin" />;
-      case 'FAILED': return <AlertCircle size={16} className="text-red-500" />;
+    switch (status?.toLowerCase()) {
+      case 'success': return <CheckCircle2 size={16} className="text-emerald-500" />;
+      case 'running': return <Loader2 size={16} className="text-blue-500 animate-spin" />;
+      case 'queued': return <Clock size={16} className="text-amber-500" />;
+      case 'failed': return <AlertCircle size={16} className="text-red-500" />;
       default: return <Clock size={16} className="text-gray-400" />;
     }
   };
@@ -97,6 +112,8 @@ const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({ kb, onDelete }) =
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
+
+  const displayName = (doc: KnowledgeDocument) => doc.docName || doc.fileName || 'Untitled document';
 
   return (
     <div className="flex flex-col h-full bg-white">
@@ -166,7 +183,7 @@ const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({ kb, onDelete }) =
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium text-gray-900 truncate">{doc.fileName}</span>
+                      <span className="font-medium text-gray-900 truncate">{displayName(doc)}</span>
                       {getStatusIcon(doc.status)}
                     </div>
                     <div className="flex items-center gap-3 text-xs text-gray-400 mt-1">
@@ -178,7 +195,7 @@ const KnowledgeBaseView: React.FC<KnowledgeBaseViewProps> = ({ kb, onDelete }) =
                     </div>
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {doc.status !== 'COMPLETED' && doc.status !== 'PROCESSING' && (
+                    {!['queued', 'running', 'success'].includes(doc.status?.toLowerCase()) && (
                       <button 
                         onClick={() => handleProcess(doc.id)}
                         className="p-2 text-gray-400 hover:text-black hover:bg-gray-100 rounded-lg transition-colors"

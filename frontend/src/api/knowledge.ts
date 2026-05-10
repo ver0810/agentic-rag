@@ -12,13 +12,16 @@ export interface KnowledgeBase {
 export interface KnowledgeDocument {
   id: string;
   kbId: string;
-  fileName: string;
+  docName?: string;
+  fileName?: string;
   fileType: string;
   fileSize: number;
-  storagePath: string;
-  status: string; // e.g., 'UPLOADED', 'PROCESSING', 'COMPLETED', 'FAILED'
+  fileUrl?: string;
+  storagePath?: string;
+  status: string;
   createdBy: string;
   createTime: string;
+  chunkCount?: number;
 }
 
 export const KnowledgeAPI = {

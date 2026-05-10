@@ -9,17 +9,19 @@ public interface KnowledgeBaseService {
 
     KnowledgeBaseDao create(KnowledgeBaseDao knowledgeBase);
 
-    KnowledgeBaseDao getById(String id);
+    KnowledgeBaseDao getById(String id, String userId);
 
-    List<KnowledgeBaseDao> list();
+    List<KnowledgeBaseDao> list(String userId);
 
-    void delete(String id);
+    void delete(String id, String userId);
 
     KnowledgeDocumentDao uploadDocument(String kbId, String fileName, String fileType, long fileSize, String fileUrl, String userId);
 
-    List<KnowledgeDocumentDao> listDocuments(String kbId);
+    List<KnowledgeDocumentDao> listDocuments(String kbId, String userId);
 
-    void deleteDocument(String docId);
+    void deleteDocument(String docId, String userId);
+
+    void enqueueProcessDocument(String docId, String userId);
 
     void processDocument(String docId);
 }

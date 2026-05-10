@@ -39,18 +39,20 @@ public class KnowledgeBaseController {
     }
 
     @GetMapping
-    public ResponseEntity<List<KnowledgeBaseDao>> list() {
-        return ResponseEntity.ok(knowledgeBaseService.list());
+    public ResponseEntity<List<KnowledgeBaseDao>> list(@CurrentUser String userId) {
+        return ResponseEntity.ok(knowledgeBaseService.list(userId));
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<KnowledgeBaseDao> getById(@PathVariable String id) {
-        return ResponseEntity.ok(knowledgeBaseService.getById(id));
+    public ResponseEntity<KnowledgeBaseDao> getById(@PathVariable String id,
+                                                    @CurrentUser String userId) {
+        return ResponseEntity.ok(knowledgeBaseService.getById(id, userId));
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable String id) {
-        knowledgeBaseService.delete(id);
+    public ResponseEntity<Void> delete(@PathVariable String id,
+                                       @CurrentUser String userId) {
+        knowledgeBaseService.delete(id, userId);
         return ResponseEntity.ok().build();
     }
 
@@ -71,20 +73,23 @@ public class KnowledgeBaseController {
     }
 
     @GetMapping("/{kbId}/documents")
-    public ResponseEntity<List<KnowledgeDocumentDao>> listDocuments(@PathVariable String kbId) {
-        return ResponseEntity.ok(knowledgeBaseService.listDocuments(kbId));
+    public ResponseEntity<List<KnowledgeDocumentDao>> listDocuments(@PathVariable String kbId,
+                                                                    @CurrentUser String userId) {
+        return ResponseEntity.ok(knowledgeBaseService.listDocuments(kbId, userId));
     }
 
     @DeleteMapping("/documents/{docId}")
-    public ResponseEntity<Void> deleteDocument(@PathVariable String docId) {
-        knowledgeBaseService.deleteDocument(docId);
+    public ResponseEntity<Void> deleteDocument(@PathVariable String docId,
+                                               @CurrentUser String userId) {
+        knowledgeBaseService.deleteDocument(docId, userId);
         return ResponseEntity.ok().build();
     }
 
     @PostMapping("/documents/{docId}/process")
-    public ResponseEntity<Map<String, String>> processDocument(@PathVariable String docId) {
-        knowledgeBaseService.processDocument(docId);
-        return ResponseEntity.ok(Map.of("message", "Document processing started"));
+    public ResponseEntity<Map<String, String>> processDocument(@PathVariable String docId,
+                                                               @CurrentUser String userId) {
+        knowledgeBaseService.enqueueProcessDocument(docId, userId);
+        return ResponseEntity.accepted().body(Map.of("message", "Document processing queued"));
     }
 
     private String getFileExtension(String fileName) {
