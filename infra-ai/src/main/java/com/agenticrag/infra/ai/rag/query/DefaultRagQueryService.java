@@ -1,16 +1,17 @@
 package com.agenticrag.infra.ai.rag.query;
 
+import com.agenticrag.infra.ai.config.RagProperties;
 import com.agenticrag.infra.ai.model.AiChatScene;
 import com.agenticrag.infra.ai.model.AiRuntimeContext;
-import com.agenticrag.infra.ai.config.RagProperties;
+import com.agenticrag.infra.ai.observability.TokenCostEstimator;
 import com.agenticrag.infra.ai.rag.vector.VectorStore;
 import com.agenticrag.infra.ai.service.AiChatService;
 import com.agenticrag.infra.ai.service.KnowledgeEmbeddingService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -28,6 +29,7 @@ public class DefaultRagQueryService implements RagQueryService {
     private final RagQueryRewriteService ragQueryRewriteService;
     private final RagRerankService ragRerankService;
     private final RagTraceRecorder ragTraceRecorder;
+    private final TokenCostEstimator tokenCostEstimator;
 
     private static final String DEFAULT_PROMPT_TEMPLATE = """
             你是一个严格基于证据回答问题的知识库助手。
@@ -43,12 +45,13 @@ public class DefaultRagQueryService implements RagQueryService {
             """;
 
     public DefaultRagQueryService(KnowledgeEmbeddingService embeddingService,
-                                   VectorStore vectorStore,
-                                   @Lazy AiChatService chatService,
-                                   RagProperties ragProperties,
-                                   RagQueryRewriteService ragQueryRewriteService,
-                                   RagRerankService ragRerankService,
-                                   @Lazy RagTraceRecorder ragTraceRecorder) {
+                                  VectorStore vectorStore,
+                                  @Lazy AiChatService chatService,
+                                  RagProperties ragProperties,
+                                  RagQueryRewriteService ragQueryRewriteService,
+                                  RagRerankService ragRerankService,
+                                  @Lazy RagTraceRecorder ragTraceRecorder,
+                                  TokenCostEstimator tokenCostEstimator) {
         this.embeddingService = embeddingService;
         this.vectorStore = vectorStore;
         this.chatService = chatService;
@@ -56,6 +59,7 @@ public class DefaultRagQueryService implements RagQueryService {
         this.ragQueryRewriteService = ragQueryRewriteService;
         this.ragRerankService = ragRerankService;
         this.ragTraceRecorder = ragTraceRecorder;
+        this.tokenCostEstimator = tokenCostEstimator;
     }
 
     @Override
@@ -104,6 +108,8 @@ public class DefaultRagQueryService implements RagQueryService {
             String retrieveNodeId = ragTraceRecorder.startNode(traceId, "retrieve", "hybrid_retrieve", Map.of("rewrittenQuery", rewrittenQuery));
             float[] queryEmbedding;
             List<VectorStore.VectorSearchResult> results;
+            int estimatedEmbeddingTokens = tokenCostEstimator.estimateTokens(rewrittenQuery);
+            double estimatedEmbeddingCost = tokenCostEstimator.estimateEmbeddingCost(estimatedEmbeddingTokens);
             try {
                 queryEmbedding = embeddingService.embed(rewrittenQuery);
                 Map<String, Object> filter = Map.of("kbId", kbId);
@@ -132,7 +138,9 @@ public class DefaultRagQueryService implements RagQueryService {
                 ragTraceRecorder.completeNode(traceId, retrieveNodeId, Map.of(
                         "vectorResultCount", vectorResults.size(),
                         "keywordResultCount", keywordCount,
-                        "filteredResultCount", results.size()));
+                        "filteredResultCount", results.size(),
+                        "estimatedEmbeddingTokens", estimatedEmbeddingTokens,
+                        "estimatedEmbeddingCost", estimatedEmbeddingCost));
             } catch (Exception ex) {
                 ragTraceRecorder.failNode(traceId, retrieveNodeId, ex.getMessage(), Map.of());
                 throw ex;
@@ -159,7 +167,13 @@ public class DefaultRagQueryService implements RagQueryService {
                         rewrittenQuery,
                         List.of(),
                         List.of());
-                ragTraceRecorder.completeRun(traceId, Map.of("rewrittenQuery", rewrittenQuery, "answerState", "empty"));
+                ragTraceRecorder.completeRun(traceId, Map.of(
+                        "rewrittenQuery", rewrittenQuery,
+                        "answerState", "empty_retrieval",
+                        "estimatedEmbeddingTokens", estimatedEmbeddingTokens,
+                        "estimatedEmbeddingCost", estimatedEmbeddingCost,
+                        "estimatedTotalTokens", estimatedEmbeddingTokens,
+                        "estimatedTotalCost", estimatedEmbeddingCost));
                 return emptyResult;
             }
 
@@ -169,6 +183,7 @@ public class DefaultRagQueryService implements RagQueryService {
                     .collect(Collectors.joining("\n\n"));
 
             String prompt = String.format(DEFAULT_PROMPT_TEMPLATE, retrievedContext, query);
+            int estimatedPromptTokens = tokenCostEstimator.estimateTokens(prompt);
 
             log.info("RAG query found {} relevant chunks, generating answer...", results.size());
 
@@ -177,11 +192,24 @@ public class DefaultRagQueryService implements RagQueryService {
             try {
                 String conversationId = "rag:" + kbId + ":" + (userId == null ? "anonymous" : userId);
                 answer = chatService.call(AiChatScene.RAG_QA, prompt, context, conversationId, userId, null);
-                ragTraceRecorder.completeNode(traceId, generateNodeId, Map.of("answerLength", answer.length()));
+                int estimatedAnswerTokens = tokenCostEstimator.estimateTokens(answer);
+                ragTraceRecorder.completeNode(traceId, generateNodeId, Map.of(
+                        "promptLength", prompt.length(),
+                        "answerLength", answer.length(),
+                        "estimatedChatInputTokens", estimatedPromptTokens,
+                        "estimatedChatOutputTokens", estimatedAnswerTokens,
+                        "estimatedChatInputCost", tokenCostEstimator.estimateChatInputCost(estimatedPromptTokens),
+                        "estimatedChatOutputCost", tokenCostEstimator.estimateChatOutputCost(estimatedAnswerTokens)));
             } catch (Exception ex) {
                 ragTraceRecorder.failNode(traceId, generateNodeId, ex.getMessage(), Map.of());
                 throw ex;
             }
+
+            int estimatedAnswerTokens = tokenCostEstimator.estimateTokens(answer);
+            double estimatedChatInputCost = tokenCostEstimator.estimateChatInputCost(estimatedPromptTokens);
+            double estimatedChatOutputCost = tokenCostEstimator.estimateChatOutputCost(estimatedAnswerTokens);
+            double estimatedTotalCost = tokenCostEstimator.round6(estimatedEmbeddingCost + estimatedChatInputCost + estimatedChatOutputCost);
+            String answerState = determineAnswerState(answer);
 
             RagQueryResult result = new RagQueryResult(
                     answer,
@@ -189,15 +217,45 @@ public class DefaultRagQueryService implements RagQueryService {
                     rewrittenQuery,
                     results.stream().map(this::toCitation).toList(),
                     results.stream().map(this::toRetrievedChunk).toList());
-            ragTraceRecorder.completeRun(traceId, Map.of(
-                    "rewrittenQuery", rewrittenQuery,
-                    "citationCount", result.citations().size(),
-                    "retrievedChunkCount", result.retrievedChunks().size()));
+            Map<String, Object> runExtraData = new LinkedHashMap<>();
+            runExtraData.put("rewrittenQuery", rewrittenQuery);
+            runExtraData.put("answerState", answerState);
+            runExtraData.put("citationCount", result.citations().size());
+            runExtraData.put("retrievedChunkCount", result.retrievedChunks().size());
+            runExtraData.put("estimatedEmbeddingTokens", estimatedEmbeddingTokens);
+            runExtraData.put("estimatedEmbeddingCost", estimatedEmbeddingCost);
+            runExtraData.put("estimatedChatInputTokens", estimatedPromptTokens);
+            runExtraData.put("estimatedChatOutputTokens", estimatedAnswerTokens);
+            runExtraData.put("estimatedChatInputCost", estimatedChatInputCost);
+            runExtraData.put("estimatedChatOutputCost", estimatedChatOutputCost);
+            runExtraData.put("estimatedTotalTokens", estimatedEmbeddingTokens + estimatedPromptTokens + estimatedAnswerTokens);
+            runExtraData.put("estimatedTotalCost", estimatedTotalCost);
+            ragTraceRecorder.completeRun(traceId, runExtraData);
             return result;
         } catch (Exception ex) {
-            ragTraceRecorder.failRun(traceId, ex.getMessage(), Map.of("kbId", kbId));
+            ragTraceRecorder.failRun(traceId, ex.getMessage(), Map.of("kbId", kbId, "answerState", "error"));
             throw ex;
         }
+    }
+
+    private String determineAnswerState(String answer) {
+        if (!StringUtils.hasText(answer)) {
+            return "empty_answer";
+        }
+        String normalized = answer.replaceAll("\\s+", "");
+        List<String> refusalMarkers = List.of(
+                "无法根据现有知识库",
+                "无法根据提供的证据",
+                "证据不足",
+                "无法确认",
+                "未找到相关信息",
+                "没有足够信息");
+        for (String marker : refusalMarkers) {
+            if (normalized.contains(marker)) {
+                return "refused";
+            }
+        }
+        return "answered";
     }
 
     private RagQueryResult.Citation toCitation(VectorStore.VectorSearchResult result) {

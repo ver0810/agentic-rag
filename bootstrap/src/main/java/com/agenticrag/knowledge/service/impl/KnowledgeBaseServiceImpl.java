@@ -3,6 +3,7 @@ package com.agenticrag.knowledge.service.impl;
 import com.agenticrag.common.ApiException;
 import com.agenticrag.ingestion.service.IngestionTaskService;
 import com.agenticrag.infra.ai.config.EmbeddingProperties;
+import com.agenticrag.infra.ai.observability.TokenCostEstimator;
 import com.agenticrag.infra.ai.rag.parser.DocumentParserFactory;
 import com.agenticrag.infra.ai.rag.vector.VectorStore;
 import com.agenticrag.infra.ai.service.KnowledgeEmbeddingService;
@@ -51,6 +52,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     private final EmbeddingProperties embeddingProperties;
     private final DocumentChunkingService documentChunkingService;
     private final IngestionTaskService ingestionTaskService;
+    private final TokenCostEstimator tokenCostEstimator;
 
     public KnowledgeBaseServiceImpl(KnowledgeBaseMapper knowledgeBaseMapper,
                                     KnowledgeDocumentMapper knowledgeDocumentMapper,
@@ -62,7 +64,8 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
                                     VectorStore vectorStore,
                                     EmbeddingProperties embeddingProperties,
                                     DocumentChunkingService documentChunkingService,
-                                    IngestionTaskService ingestionTaskService) {
+                                    IngestionTaskService ingestionTaskService,
+                                    TokenCostEstimator tokenCostEstimator) {
         this.knowledgeBaseMapper = knowledgeBaseMapper;
         this.knowledgeDocumentMapper = knowledgeDocumentMapper;
         this.knowledgeDocumentChunkLogMapper = knowledgeDocumentChunkLogMapper;
@@ -74,6 +77,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         this.embeddingProperties = embeddingProperties;
         this.documentChunkingService = documentChunkingService;
         this.ingestionTaskService = ingestionTaskService;
+        this.tokenCostEstimator = tokenCostEstimator;
     }
 
     @Override
@@ -244,6 +248,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
                 chunkDao.setContent(chunks.get(i));
                 chunkDao.setContentHash(calculateHash(chunks.get(i)));
                 chunkDao.setCharCount(chunks.get(i).length());
+                chunkDao.setTokenCount(tokenCostEstimator.estimateTokens(chunks.get(i)));
                 chunkDao.setEnabled(1);
                 chunkDao.setCreatedBy(doc.getCreatedBy());
                 chunkDao.setCreateTime(LocalDateTime.now());

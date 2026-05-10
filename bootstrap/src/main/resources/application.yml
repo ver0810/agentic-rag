@@ -71,6 +71,21 @@ agenticrag:
       rewrite-enabled: true
       rerank-enabled: true
       max-context-chunks: 6
+    observability:
+      chars-per-token: 4.0
+      cost:
+        chat-input-per-1k-tokens: 0.002
+        chat-output-per-1k-tokens: 0.008
+        embedding-per-1k-tokens: 0.0001
+      alerts:
+        minimum-sample-size: 5
+        consecutive-failures-threshold: 3
+        retrieval-success-drop-threshold: 0.15
+        model-error-rate-threshold: 0.20
+        model-error-rate-increase-threshold: 0.10
+        notifications-enabled: false
+        webhook-url: ${RAG_ALERT_WEBHOOK_URL:}
+        dispatch-interval-ms: 300000
 
 server:
   servlet:
