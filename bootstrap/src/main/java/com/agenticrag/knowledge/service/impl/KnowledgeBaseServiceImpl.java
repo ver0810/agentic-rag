@@ -14,6 +14,7 @@ import com.agenticrag.knowledge.dao.mapper.KnowledgeBaseMapper;
 import com.agenticrag.knowledge.dao.mapper.KnowledgeChunkMapper;
 import com.agenticrag.knowledge.dao.mapper.KnowledgeDocumentChunkLogMapper;
 import com.agenticrag.knowledge.dao.mapper.KnowledgeDocumentMapper;
+import com.agenticrag.knowledge.service.DocumentChunkingService;
 import com.agenticrag.knowledge.service.KnowledgeBaseService;
 import com.agenticrag.knowledge.service.KnowledgeDocumentProcessingService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -50,6 +51,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     private final VectorStore vectorStore;
     private final EmbeddingProperties embeddingProperties;
     private final KnowledgeDocumentProcessingService knowledgeDocumentProcessingService;
+    private final DocumentChunkingService documentChunkingService;
 
     public KnowledgeBaseServiceImpl(KnowledgeBaseMapper knowledgeBaseMapper,
                                     KnowledgeDocumentMapper knowledgeDocumentMapper,
@@ -60,7 +62,8 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
                                     KnowledgeEmbeddingService knowledgeEmbeddingService,
                                     VectorStore vectorStore,
                                     EmbeddingProperties embeddingProperties,
-                                    @Lazy KnowledgeDocumentProcessingService knowledgeDocumentProcessingService) {
+                                    @Lazy KnowledgeDocumentProcessingService knowledgeDocumentProcessingService,
+                                    DocumentChunkingService documentChunkingService) {
         this.knowledgeBaseMapper = knowledgeBaseMapper;
         this.knowledgeDocumentMapper = knowledgeDocumentMapper;
         this.knowledgeDocumentChunkLogMapper = knowledgeDocumentChunkLogMapper;
@@ -71,6 +74,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         this.vectorStore = vectorStore;
         this.embeddingProperties = embeddingProperties;
         this.knowledgeDocumentProcessingService = knowledgeDocumentProcessingService;
+        this.documentChunkingService = documentChunkingService;
     }
 
     @Override
@@ -129,7 +133,8 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         document.setEnabled(1);
         document.setStatus("pending");
         document.setProcessMode("chunk");
-        document.setChunkStrategy("fixed");
+        document.setChunkStrategy("paragraph");
+        document.setChunkConfig("{\"maxChars\":900,\"overlapParagraphs\":1,\"minChunkChars\":180}");
         document.setChunkCount(0);
         document.setCreatedBy(userId);
         document.setCreateTime(LocalDateTime.now());
@@ -208,7 +213,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             log.info("Document parsed, content length: {}", content.length());
 
             long chunkStart = System.nanoTime();
-            List<String> chunks = splitText(content, CHUNK_SIZE, CHUNK_OVERLAP);
+            List<String> chunks = documentChunkingService.chunk(content, doc.getChunkStrategy(), doc.getChunkConfig());
             processLog.setChunkDuration(toMillis(chunkStart));
             processLog.setChunkCount(chunks.size());
             log.info("Text split into {} chunks", chunks.size());
@@ -270,18 +275,6 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             log.error("Failed to process document: {}. Error: {}", docId, e.getMessage(), e);
             throw new RuntimeException("Document processing failed: " + e.getMessage(), e);
         }
-    }
-
-    private List<String> splitText(String text, int chunkSize, int overlap) {
-        List<String> chunks = new ArrayList<>();
-        int start = 0;
-        while (start < text.length()) {
-            int end = Math.min(start + chunkSize, text.length());
-            String chunk = text.substring(start, end);
-            chunks.add(chunk);
-            start += chunkSize - overlap;
-        }
-        return chunks;
     }
 
     private String calculateHash(String content) {

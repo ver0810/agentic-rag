@@ -2,6 +2,7 @@ package com.agenticrag.infra.ai.rag.query;
 
 import com.agenticrag.infra.ai.model.AiChatScene;
 import com.agenticrag.infra.ai.model.AiRuntimeContext;
+import com.agenticrag.infra.ai.config.RagProperties;
 import com.agenticrag.infra.ai.rag.vector.VectorStore;
 import com.agenticrag.infra.ai.service.AiChatService;
 import com.agenticrag.infra.ai.service.KnowledgeEmbeddingService;
@@ -9,6 +10,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -20,9 +24,7 @@ public class DefaultRagQueryService implements RagQueryService {
     private final KnowledgeEmbeddingService embeddingService;
     private final VectorStore vectorStore;
     private final AiChatService chatService;
-
-    private static final int DEFAULT_TOP_K = 5;
-    private static final double SIMILARITY_THRESHOLD = 0.7;
+    private final RagProperties ragProperties;
 
     private static final String DEFAULT_PROMPT_TEMPLATE = """
             基于以下上下文回答用户问题。如果上下文中没有相关信息，请说明无法根据提供的信息回答。
@@ -37,15 +39,17 @@ public class DefaultRagQueryService implements RagQueryService {
 
     public DefaultRagQueryService(KnowledgeEmbeddingService embeddingService,
                                    VectorStore vectorStore,
-                                   @Lazy AiChatService chatService) {
+                                   @Lazy AiChatService chatService,
+                                   RagProperties ragProperties) {
         this.embeddingService = embeddingService;
         this.vectorStore = vectorStore;
         this.chatService = chatService;
+        this.ragProperties = ragProperties;
     }
 
     @Override
     public String query(String query, String kbId, String userId) {
-        return query(query, kbId, userId, null, DEFAULT_TOP_K);
+        return query(query, kbId, userId, null, ragProperties.getDefaultTopK());
     }
 
     @Override
@@ -68,11 +72,30 @@ public class DefaultRagQueryService implements RagQueryService {
         log.info("RAG query: kbId={}, query={}", kbId, query);
 
         float[] queryEmbedding = embeddingService.embed(query);
+        int effectiveTopK = topK > 0 ? topK : ragProperties.getDefaultTopK();
+        Map<String, Object> filter = Map.of("kbId", kbId);
 
-        List<VectorStore.VectorSearchResult> results = vectorStore.search(queryEmbedding, topK, Map.of("kbId", kbId));
+        List<VectorStore.VectorSearchResult> vectorResults = vectorStore.search(
+                queryEmbedding,
+                Math.max(effectiveTopK, ragProperties.getVectorTopK()),
+                filter);
+        List<VectorStore.VectorSearchResult> results = vectorResults;
+        if (ragProperties.isHybridEnabled()) {
+            List<VectorStore.VectorSearchResult> keywordResults = vectorStore.keywordSearch(
+                    query,
+                    Math.max(effectiveTopK, ragProperties.getKeywordTopK()),
+                    filter);
+            results = mergeResults(vectorResults, keywordResults, effectiveTopK);
+        } else {
+            results = vectorResults.stream()
+                    .sorted(Comparator.comparing(VectorStore.VectorSearchResult::score).reversed())
+                    .limit(effectiveTopK)
+                    .toList();
+        }
 
         results = results.stream()
-                .filter(r -> r.score() >= SIMILARITY_THRESHOLD)
+                .filter(r -> r.score() >= ragProperties.getSimilarityThreshold())
+                .limit(effectiveTopK)
                 .collect(Collectors.toList());
 
         if (results.isEmpty()) {
@@ -144,5 +167,42 @@ public class DefaultRagQueryService implements RagQueryService {
             return value;
         }
         return value.substring(0, maxLength);
+    }
+
+    private List<VectorStore.VectorSearchResult> mergeResults(List<VectorStore.VectorSearchResult> vectorResults,
+                                                              List<VectorStore.VectorSearchResult> keywordResults,
+                                                              int topK) {
+        Map<String, ScoredResult> merged = new LinkedHashMap<>();
+        for (VectorStore.VectorSearchResult result : vectorResults) {
+            merged.put(result.chunkId(), new ScoredResult(result, result.score() * (float) ragProperties.getVectorWeight()));
+        }
+        for (VectorStore.VectorSearchResult result : keywordResults) {
+            float keywordScore = result.score() * (float) ragProperties.getKeywordWeight();
+            ScoredResult existing = merged.get(result.chunkId());
+            if (existing == null) {
+                merged.put(result.chunkId(), new ScoredResult(result, keywordScore));
+            } else {
+                existing.score += keywordScore;
+            }
+        }
+        return merged.values().stream()
+                .sorted(Comparator.comparing((ScoredResult item) -> item.score).reversed())
+                .limit(topK)
+                .map(ScoredResult::toResult)
+                .toList();
+    }
+
+    private static class ScoredResult {
+        private final VectorStore.VectorSearchResult source;
+        private float score;
+
+        private ScoredResult(VectorStore.VectorSearchResult source, float score) {
+            this.source = source;
+            this.score = score;
+        }
+
+        private VectorStore.VectorSearchResult toResult() {
+            return new VectorStore.VectorSearchResult(source.chunkId(), source.content(), score, source.metadata());
+        }
     }
 }

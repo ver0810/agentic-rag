@@ -60,6 +60,14 @@ agenticrag:
           temperature: 0.7
           max-tokens: 64
           system-prompt: 你负责为输入内容生成简洁明确的标题。
+    rag:
+      hybrid-enabled: true
+      default-top-k: 5
+      vector-top-k: 12
+      keyword-top-k: 8
+      similarity-threshold: 0.55
+      vector-weight: 0.75
+      keyword-weight: 0.25
 
 server:
   servlet:

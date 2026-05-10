@@ -11,6 +11,8 @@ public interface VectorStore {
 
     List<VectorSearchResult> search(float[] queryEmbedding, int topK, Map<String, Object> filter);
 
+    List<VectorSearchResult> keywordSearch(String query, int topK, Map<String, Object> filter);
+
     void deleteByDocId(String docId);
 
     void deleteByKbId(String kbId);

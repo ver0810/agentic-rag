@@ -4,6 +4,6 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@EnableConfigurationProperties({AiChatProperties.class, AiProviderProperties.class, EmbeddingProperties.class})
+@EnableConfigurationProperties({AiChatProperties.class, AiProviderProperties.class, EmbeddingProperties.class, RagProperties.class})
 public class AiInfraAutoConfiguration {
 }
