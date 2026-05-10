@@ -37,6 +37,13 @@ agenticrag:
         chat-model: ${OPENAI_CHAT_MODEL:deepseek-v4-flash}
         embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
     
+    # Embedding 专用配置（用于知识库向量化）
+    embedding:
+      provider: ${EMBEDDING_PROVIDER:qwen}
+      base-url: ${EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
+      api-key: ${EMBEDDING_API_KEY:${API_KEY}}
+      model: ${EMBEDDING_MODEL:text-embedding-v3}
+    
     # 聊天场景配置
     chat:
       default-scene: general

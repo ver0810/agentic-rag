@@ -1,7 +1,7 @@
 package com.agenticrag.knowledge.service.impl;
 
 import com.agenticrag.infra.ai.rag.parser.DocumentParserFactory;
-import com.agenticrag.infra.ai.service.AiEmbeddingService;
+import com.agenticrag.infra.ai.service.KnowledgeEmbeddingService;
 import com.agenticrag.infra.ai.storage.FileStorageService;
 import com.agenticrag.knowledge.dao.entity.KnowledgeBaseDao;
 import com.agenticrag.knowledge.dao.entity.KnowledgeChunkDao;
@@ -30,7 +30,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     private final KnowledgeChunkMapper knowledgeChunkMapper;
     private final FileStorageService fileStorageService;
     private final DocumentParserFactory documentParserFactory;
-    private final AiEmbeddingService aiEmbeddingService;
+    private final KnowledgeEmbeddingService knowledgeEmbeddingService;
 
     private static final int CHUNK_SIZE = 500;
     private static final int CHUNK_OVERLAP = 50;
@@ -40,13 +40,13 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
                                     KnowledgeChunkMapper knowledgeChunkMapper,
                                     FileStorageService fileStorageService,
                                     DocumentParserFactory documentParserFactory,
-                                    AiEmbeddingService aiEmbeddingService) {
+                                    KnowledgeEmbeddingService knowledgeEmbeddingService) {
         this.knowledgeBaseMapper = knowledgeBaseMapper;
         this.knowledgeDocumentMapper = knowledgeDocumentMapper;
         this.knowledgeChunkMapper = knowledgeChunkMapper;
         this.fileStorageService = fileStorageService;
         this.documentParserFactory = documentParserFactory;
-        this.aiEmbeddingService = aiEmbeddingService;
+        this.knowledgeEmbeddingService = knowledgeEmbeddingService;
     }
 
     @Override
@@ -164,7 +164,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             }
             
             log.info("Starting embedding for {} chunks...", chunkContents.size());
-            List<float[]> embeddings = aiEmbeddingService.embedAll(chunkContents);
+            List<float[]> embeddings = knowledgeEmbeddingService.embedAll(chunkContents);
             log.info("Embedding completed, got {} vectors", embeddings.size());
 
             for (int i = 0; i < chunks.size(); i++) {
