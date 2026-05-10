@@ -69,6 +69,7 @@ function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [showModelMenu, setShowModelMenu] = useState(false)
@@ -78,6 +79,7 @@ function ChatInterface() {
   const [configuredModels, setConfiguredModels] = useState<ConfiguredModelOption[]>([])
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [recentChats, setRecentChats] = useState<Chat[]>([])
+  const [error, setError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [activeMenuSessionId, setActiveMenuSessionId] = useState<string | null>(null)
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
@@ -123,10 +125,13 @@ function ChatInterface() {
       setRecentChats(chats)
     } catch (err) {
       console.error('Failed to fetch sessions', err)
+      setError('Failed to load sessions')
     }
   }
 
   const fetchMessages = async (sessionId: string) => {
+    setIsLoadingMessages(true)
+    setError(null)
     try {
       const response = await axios.get(`/chat/messages?conversationId=${sessionId}`)
       const history = response.data.map((msg: any) => ({
@@ -136,6 +141,9 @@ function ChatInterface() {
       setMessages(history)
     } catch (err) {
       console.error('Failed to fetch messages', err)
+      setError('Failed to load messages')
+    } finally {
+      setIsLoadingMessages(false)
     }
   }
 
@@ -161,10 +169,12 @@ function ChatInterface() {
       console.log("Create a new session successful");
     } catch (error) {
       console.error("Failed to create new session", error);
+      setError('Failed to create new session')
     }
   }
 
   const handleSwitchSession = (sessionId: string) => {
+    if (sessionId === currentSessionId) return
     setCurrentSessionId(sessionId)
     fetchMessages(sessionId)
   }
@@ -182,6 +192,7 @@ function ChatInterface() {
         fetchSessions()
       } catch (err) {
         console.error('Failed to rename session', err)
+        setError('Failed to rename session')
       }
     }
     setEditingSessionId(null)
@@ -204,6 +215,7 @@ function ChatInterface() {
         fetchSessions()
       } catch (err) {
         console.error('Failed to delete session', err)
+        setError('Failed to delete session')
       }
     }
     setActiveMenuSessionId(null)
@@ -259,7 +271,7 @@ function ChatInterface() {
         fetchSessions(); // Show "New Chat" in sidebar immediately
       }
 
-      url.searchParams.append('conversationId', sessionId);
+      url.searchParams.append('conversationId', sessionId!);
 
       const response = await fetch(url.toString(), {
         method: 'POST',
@@ -335,6 +347,16 @@ function ChatInterface() {
           fetchConfiguredModels()
         }}
       />
+
+      {error && (
+        <div className="fixed top-4 right-4 z-50 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-in fade-in slide-in-from-right-2 duration-300">
+          <span className="text-sm">{error}</span>
+          <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">
+            <span className="sr-only">Close</span>
+            ×
+          </button>
+        </div>
+      )}
 
       <aside
         className={`${
@@ -614,7 +636,12 @@ function ChatInterface() {
 
         <div className="flex-1 overflow-y-auto scrollbar-hide pt-4">
           <div className="max-w-3xl mx-auto px-4 w-full">
-            {messages.length === 0 ? (
+            {isLoadingMessages ? (
+              <div className="h-[70vh] flex flex-col items-center justify-center space-y-4">
+                <div className="w-8 h-8 border-2 border-gray-200 border-t-black rounded-full animate-spin" />
+                <p className="text-sm text-gray-400">Loading messages...</p>
+              </div>
+            ) : messages.length === 0 ? (
               <div className="h-[70vh] flex flex-col items-center justify-center space-y-6">
                 <div className="w-16 h-16 bg-white border border-gray-200 rounded-2xl flex items-center justify-center shadow-sm text-black">
                   <Bot size={32} strokeWidth={1.5} />

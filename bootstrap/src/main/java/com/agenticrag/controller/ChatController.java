@@ -12,12 +12,15 @@ import com.agenticrag.user.service.UserAiProviderConfigService;
 import com.agenticrag.utils.SessionIdGenerator;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 
 @RestController
@@ -28,6 +31,15 @@ public class ChatController {
     private final UserAiProviderConfigService userAiProviderConfigService;
     private final ConversationMapper conversationMapper;
     private final MessageMapper messageMapper;
+    private final Cache<String, List<MessageDao>> messageCache = Caffeine.newBuilder()
+            .expireAfterWrite(5, TimeUnit.MINUTES)
+            .maximumSize(100)
+            .build();
+
+    private final Cache<String, List<ConversationDao>> sessionCache = Caffeine.newBuilder()
+            .expireAfterWrite(2, TimeUnit.MINUTES)
+            .maximumSize(50)
+            .build();
 
     public ChatController(AiChatService aiChatService,
                           UserAiProviderConfigService userAiProviderConfigService,
@@ -41,23 +53,27 @@ public class ChatController {
 
     @GetMapping("/sessions")
     public ResponseEntity<List<ConversationDao>> listSessions(@CurrentUser String userId) {
-        List<ConversationDao> sessions = conversationMapper.selectList(
-                new LambdaQueryWrapper<ConversationDao>()
-                        .eq(ConversationDao::getUserId, userId)
-                        .eq(ConversationDao::getDeleted, 0)
-                        .orderByDesc(ConversationDao::getLastTime)
+        List<ConversationDao> sessions = sessionCache.get(userId, id ->
+                conversationMapper.selectList(
+                        new LambdaQueryWrapper<ConversationDao>()
+                                .eq(ConversationDao::getUserId, id)
+                                .eq(ConversationDao::getDeleted, 0)
+                                .orderByDesc(ConversationDao::getLastTime)
+                )
         );
         return ResponseEntity.ok(sessions);
     }
 
     @GetMapping("/messages")
     public ResponseEntity<List<MessageDao>> listMessages(@RequestParam String conversationId, @CurrentUser String userId) {
-        List<MessageDao> messages = messageMapper.selectList(
-                new LambdaQueryWrapper<MessageDao>()
-                        .eq(MessageDao::getConversationId, conversationId)
-                        .eq(MessageDao::getUserId, userId)
-                        .eq(MessageDao::getDeleted, 0)
-                        .orderByAsc(MessageDao::getCreateTime)
+        List<MessageDao> messages = messageCache.get(conversationId, id ->
+                messageMapper.selectList(
+                        new LambdaQueryWrapper<MessageDao>()
+                                .eq(MessageDao::getConversationId, id)
+                                .eq(MessageDao::getUserId, userId)
+                                .eq(MessageDao::getDeleted, 0)
+                                .orderByAsc(MessageDao::getCreateTime)
+                )
         );
         return ResponseEntity.ok(messages);
     }
@@ -70,6 +86,7 @@ public class ChatController {
                 .eq(ConversationDao::getConversationId, conversationId)
                 .eq(ConversationDao::getUserId, userId)
                 .set(ConversationDao::getTitle, title));
+        sessionCache.invalidate(userId);
         return ResponseEntity.ok().build();
     }
 
@@ -84,6 +101,8 @@ public class ChatController {
         conversation.setLastTime(java.time.LocalDateTime.now());
         conversationMapper.insert(conversation);
 
+        sessionCache.invalidate(userId);
+
         return ResponseEntity.ok(Map.of(
                 "sessionId", sessionId,
                 "message", "会话创建成功"
@@ -96,6 +115,8 @@ public class ChatController {
                 .eq(ConversationDao::getConversationId, sessionId)
                 .eq(ConversationDao::getUserId, userId)
                 .set(ConversationDao::getDeleted, 1));
+        sessionCache.invalidate(userId);
+        messageCache.invalidate(sessionId);
         return ResponseEntity.ok().build();
     }
 
@@ -135,10 +156,10 @@ public class ChatController {
         messageMapper.insert(message);
 
         // Update conversation last time and optionally title
-        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ConversationDao> updateWrapper = 
+        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ConversationDao> updateWrapper =
                 new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ConversationDao>()
-                .eq(ConversationDao::getConversationId, conversationId)
-                .set(ConversationDao::getLastTime, java.time.LocalDateTime.now());
+                        .eq(ConversationDao::getConversationId, conversationId)
+                        .set(ConversationDao::getLastTime, java.time.LocalDateTime.now());
 
         // If it's the first user message, automatically set title
         if ("user".equals(role)) {
@@ -153,5 +174,7 @@ public class ChatController {
         }
 
         conversationMapper.update(null, updateWrapper);
+        messageCache.invalidate(conversationId);
+        sessionCache.invalidate(userId);
     }
 }

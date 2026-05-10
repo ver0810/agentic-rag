@@ -3,21 +3,21 @@ package com.agenticrag.infra.ai.service.impl;
 import com.agenticrag.infra.ai.config.AiChatProperties;
 import com.agenticrag.infra.ai.model.AiChatScene;
 import com.agenticrag.infra.ai.model.AiRuntimeContext;
-import com.agenticrag.infra.ai.model.AiRuntimeOptions;
 import com.agenticrag.infra.ai.service.AiChatService;
 import com.agenticrag.infra.ai.service.AiProviderRouter;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
-import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+
 
 @Service
 public class DefaultAiChatService implements AiChatService {
@@ -25,7 +25,11 @@ public class DefaultAiChatService implements AiChatService {
     private final ChatModel chatModel;
     private final AiChatProperties properties;
     private final AiProviderRouter providerRouter;
-    private final Map<String, ChatClient> chatClients = new ConcurrentHashMap<>();
+    private final ChatMemory chatMemory;
+    private final Cache<String, ChatClient> chatClients = Caffeine.newBuilder()
+            .expireAfterWrite(10, TimeUnit.MINUTES)
+            .maximumSize(3)
+            .build();
 
     public DefaultAiChatService(ChatModel chatModel,
                                 AiChatProperties properties,
@@ -33,12 +37,13 @@ public class DefaultAiChatService implements AiChatService {
         this.chatModel = chatModel;
         this.properties = properties;
         this.providerRouter = providerRouter;
+        this.chatMemory = chatMemory;
     }
 
     @Override
     public String call(AiChatScene scene, String message, AiRuntimeContext context, String conversationId) {
         String enhancedMessage = applyPreEnhancements(message, context);
-        ChatClient chatClient = chatClients.computeIfAbsent(conversationId, id -> buildChatClient(scene, context, id));
+        ChatClient chatClient = chatClients.get(conversationId, id -> buildChatClient(scene, context, id));
         String result = chatClient.prompt()
                 .user(enhancedMessage)
                 .call()
@@ -49,7 +54,7 @@ public class DefaultAiChatService implements AiChatService {
     @Override
     public Flux<String> stream(AiChatScene scene, String message, AiRuntimeContext context, String conversationId) {
         String enhancedMessage = applyPreEnhancements(message, context);
-        ChatClient chatClient = chatClients.computeIfAbsent(conversationId, id -> buildChatClient(scene, context, id));
+        ChatClient chatClient = chatClients.get(conversationId, id -> buildChatClient(scene, context, id));
         return chatClient.prompt()
                 .user(enhancedMessage)
                 .stream()
@@ -71,8 +76,6 @@ public class DefaultAiChatService implements AiChatService {
     private ChatClient buildChatClient(AiChatScene scene, AiRuntimeContext context, String conversationId) {
         ChatModel selectedModel = selectChatModel(context, scene);
         AiChatProperties.SceneOptions sceneOptions = properties.getScenes().get(resolveSceneCode(scene));
-
-        ChatMemory chatMemory = MessageWindowChatMemory.builder().maxMessages(10).build();
 
         ChatClient.Builder builder = ChatClient.builder(selectedModel)
                 .defaultAdvisors(

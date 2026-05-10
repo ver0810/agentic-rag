@@ -8,6 +8,8 @@ spring:
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
+  # Spring AI 框架默认配置（用于自动配置 OpenAiChatModel Bean）
+  # 注意：此配置用于 Spring AI 框架自动配置，与 agenticrag.ai.providers.openai 配置相同
   ai:
     openai:
       base-url: ${BASE_URL}
@@ -23,6 +25,9 @@ agenticrag:
       secret: ${JWT_SECRET:change-this-jwt-secret-to-a-long-random-value-1234567890}
       access-expire-seconds: ${JWT_ACCESS_EXPIRE_SECONDS:7200}
       refresh-expire-seconds: ${JWT_REFRESH_EXPIRE_SECONDS:604800}
+  
+  # 自定义 AI 配置（用于多提供商支持和用户自定义配置）
+  # 注意：此配置用于应用级别的多提供商支持，与 spring.ai.openai 配置相同
   ai:
     default-provider: openai
     providers:
@@ -31,6 +36,8 @@ agenticrag:
         api-key: ${OPENAI_API_KEY:${API_KEY}}
         chat-model: ${OPENAI_CHAT_MODEL:deepseek-v4-flash}
         embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
+    
+    # 聊天场景配置
     chat:
       default-scene: general
       scenes:
