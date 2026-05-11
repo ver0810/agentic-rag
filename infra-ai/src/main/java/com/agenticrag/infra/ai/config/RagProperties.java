@@ -24,6 +24,7 @@ public class RagProperties {
     private double rerankerRetrievalWeight = 0.8d;
     private double rerankerLexicalWeight = 0.2d;
     private int maxContextChunks = 6;
+    private String promptTemplate;
 
     public boolean isHybridEnabled() {
         return hybridEnabled;
@@ -175,5 +176,13 @@ public class RagProperties {
 
     public void setMaxContextChunks(int maxContextChunks) {
         this.maxContextChunks = maxContextChunks;
+    }
+
+    public String getPromptTemplate() {
+        return promptTemplate;
+    }
+
+    public void setPromptTemplate(String promptTemplate) {
+        this.promptTemplate = promptTemplate;
     }
 }

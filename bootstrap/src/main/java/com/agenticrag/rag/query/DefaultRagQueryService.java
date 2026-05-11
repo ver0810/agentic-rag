@@ -48,6 +48,7 @@ public class DefaultRagQueryService implements RagQueryService {
     private final RagTraceRecorder ragTraceRecorder;
     private final TokenCostEstimator tokenCostEstimator;
     private final KnowledgeBaseMapper knowledgeBaseMapper;
+    private final RagCacheService ragCacheService;
 
     public DefaultRagQueryService(KnowledgeEmbeddingPort embeddingPort,
                                   VectorIndexPort vectorIndexPort,
@@ -57,7 +58,8 @@ public class DefaultRagQueryService implements RagQueryService {
                                   RagRerankService ragRerankService,
                                   @Lazy RagTraceRecorder ragTraceRecorder,
                                   TokenCostEstimator tokenCostEstimator,
-                                  KnowledgeBaseMapper knowledgeBaseMapper) {
+                                  KnowledgeBaseMapper knowledgeBaseMapper,
+                                  RagCacheService ragCacheService) {
         this.embeddingPort = embeddingPort;
         this.vectorIndexPort = vectorIndexPort;
         this.chatService = chatService;
@@ -67,6 +69,7 @@ public class DefaultRagQueryService implements RagQueryService {
         this.ragTraceRecorder = ragTraceRecorder;
         this.tokenCostEstimator = tokenCostEstimator;
         this.knowledgeBaseMapper = knowledgeBaseMapper;
+        this.ragCacheService = ragCacheService;
     }
 
     @Override
@@ -139,15 +142,27 @@ public class DefaultRagQueryService implements RagQueryService {
                     totalEstimatedEmbeddingTokens += estimatedTokens;
                     totalEstimatedEmbeddingCost += tokenCostEstimator.estimateEmbeddingCost(estimatedTokens);
 
-                    float[] queryEmbedding = embeddingPort.embed(q);
-                    List<? extends VectorIndexPort.SearchResult> vectorResults = vectorIndexPort.search(
-                            queryEmbedding,
-                            Math.max(effectiveTopK, ragProperties.getVectorTopK()),
-                            filter)
-                            .stream()
-                            .filter(r -> r.score() >= effectiveThreshold)
-                            .toList();
-                    allVectorResults.add(vectorResults);
+                    float[] queryEmbedding = ragCacheService.getEmbedding(q);
+                    if (queryEmbedding == null) {
+                        queryEmbedding = embeddingPort.embed(q);
+                        ragCacheService.putEmbedding(q, queryEmbedding);
+                    }
+
+                    String resultCacheKey = RagCacheService.buildResultCacheKey(q, kbId, effectiveTopK);
+                    List<? extends VectorIndexPort.SearchResult> cachedResults = ragCacheService.getResults(resultCacheKey);
+                    if (cachedResults != null) {
+                        allVectorResults.add(cachedResults);
+                    } else {
+                        List<? extends VectorIndexPort.SearchResult> vectorResults = vectorIndexPort.search(
+                                queryEmbedding,
+                                Math.max(effectiveTopK, ragProperties.getVectorTopK()),
+                                filter)
+                                .stream()
+                                .filter(r -> r.score() >= effectiveThreshold)
+                                .toList();
+                        ragCacheService.putResults(resultCacheKey, vectorResults);
+                        allVectorResults.add(vectorResults);
+                    }
 
                     if (ragProperties.isHybridEnabled()) {
                         List<? extends VectorIndexPort.SearchResult> keywordResults = vectorIndexPort.keywordSearch(
@@ -226,7 +241,8 @@ public class DefaultRagQueryService implements RagQueryService {
                     .map(this::toEvidenceBlock)
                     .collect(Collectors.joining("\n\n"));
 
-            String prompt = String.format(DEFAULT_PROMPT_TEMPLATE, retrievedContext, query);
+            String promptTemplate = resolvePromptTemplate(kbId);
+            String prompt = String.format(promptTemplate, retrievedContext, query);
             int estimatedPromptTokens = tokenCostEstimator.estimateTokens(prompt);
 
             log.info("RAG query found {} relevant chunks, generating answer...", results.size());
@@ -296,6 +312,24 @@ public class DefaultRagQueryService implements RagQueryService {
             return kb.getSimilarityThreshold();
         }
         return ragProperties.getSimilarityThreshold();
+    }
+
+    private String resolvePromptTemplate(String kbId) {
+        if (kbId != null) {
+            KnowledgeBaseEntity kb = knowledgeBaseMapper.selectOne(
+                    new LambdaQueryWrapper<KnowledgeBaseEntity>()
+                            .eq(KnowledgeBaseEntity::getId, kbId)
+                            .eq(KnowledgeBaseEntity::getDeleted, 0)
+                            .select(KnowledgeBaseEntity::getPromptTemplate)
+                            .last("limit 1"));
+            if (kb != null && StringUtils.hasText(kb.getPromptTemplate())) {
+                return kb.getPromptTemplate();
+            }
+        }
+        if (StringUtils.hasText(ragProperties.getPromptTemplate())) {
+            return ragProperties.getPromptTemplate();
+        }
+        return DEFAULT_PROMPT_TEMPLATE;
     }
 
     private String determineAnswerState(String answer) {

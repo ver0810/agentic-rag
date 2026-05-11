@@ -23,6 +23,24 @@ public class IngestionSchemaInitializer {
             addColumnIfMissing("t_ingestion_task", "next_run_at", "TIMESTAMP");
             addColumnIfMissing("t_ingestion_task", "lease_owner", "VARCHAR(64)");
             addColumnIfMissing("t_ingestion_task", "lease_until", "TIMESTAMP");
+            addColumnIfMissing("t_knowledge_base", "similarity_threshold", "DOUBLE PRECISION");
+            addColumnIfMissing("t_knowledge_base", "prompt_template", "TEXT");
+
+            jdbcTemplate.execute("""
+                    CREATE TABLE IF NOT EXISTS t_rag_feedback (
+                        id VARCHAR(64) PRIMARY KEY,
+                        trace_id VARCHAR(64),
+                        kb_id VARCHAR(64),
+                        user_id VARCHAR(64),
+                        query TEXT,
+                        answer TEXT,
+                        rating INTEGER,
+                        comment TEXT,
+                        create_time TIMESTAMP,
+                        update_time TIMESTAMP,
+                        deleted INTEGER DEFAULT 0
+                    )
+                    """);
         } catch (Exception ex) {
             log.warn("Failed to initialize ingestion schema automatically: {}", ex.getMessage());
         }
