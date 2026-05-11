@@ -17,6 +17,7 @@ import com.agenticrag.knowledge.dao.mapper.KnowledgeChunkMapper;
 import com.agenticrag.knowledge.dao.mapper.KnowledgeDocumentChunkLogMapper;
 import com.agenticrag.knowledge.dao.mapper.KnowledgeDocumentMapper;
 import com.agenticrag.knowledge.service.DocumentChunkingService;
+import com.agenticrag.knowledge.service.ChunkResult;
 import com.agenticrag.knowledge.service.KnowledgeBaseService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -216,7 +217,8 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             log.info("Document parsed, content length: {}", content.length());
 
             long chunkStart = System.nanoTime();
-            List<String> chunks = documentChunkingService.chunk(content, doc.getChunkStrategy(), doc.getChunkConfig());
+            List<ChunkResult> chunkResults = documentChunkingService.chunkWithMetadata(content, doc.getChunkStrategy(), doc.getChunkConfig());
+            List<String> chunks = chunkResults.stream().map(ChunkResult::content).toList();
             processLog.setChunkDuration(toMillis(chunkStart));
             processLog.setChunkCount(chunks.size());
             log.info("Text split into {} chunks", chunks.size());
@@ -226,13 +228,36 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             }
 
             long embedStart = System.nanoTime();
-            List<float[]> embeddings = knowledgeEmbeddingPort.embedAll(new ArrayList<>(chunks));
-            processLog.setEmbedDuration(toMillis(embedStart));
-            log.info("Embedding completed, got {} vectors", embeddings.size());
+            Map<String, String> existingHashMap = loadExistingChunkHashes(docId);
+            List<float[]> embeddings = new ArrayList<>();
+            int reusedCount = 0;
+            List<String> chunksToEmbed = new ArrayList<>();
+            List<Integer> chunksToEmbedIndex = new ArrayList<>();
 
-            if (embeddings.size() != chunks.size()) {
-                throw new IllegalStateException("Embedding result size does not match chunk count");
+            for (int i = 0; i < chunks.size(); i++) {
+                String hash = calculateHash(chunks.get(i));
+                String existingChunkId = existingHashMap.get(hash);
+                if (existingChunkId != null) {
+                    KnowledgeChunkEntity existing = knowledgeChunkMapper.selectById(existingChunkId);
+                    if (existing != null && existing.getDeleted() == 0) {
+                        embeddings.add(null);
+                        reusedCount++;
+                        continue;
+                    }
+                }
+                chunksToEmbed.add(chunks.get(i));
+                chunksToEmbedIndex.add(i);
+                embeddings.add(null);
             }
+
+            if (!chunksToEmbed.isEmpty()) {
+                List<float[]> newEmbeddings = knowledgeEmbeddingPort.embedAll(new ArrayList<>(chunksToEmbed));
+                for (int j = 0; j < newEmbeddings.size(); j++) {
+                    embeddings.set(chunksToEmbedIndex.get(j), newEmbeddings.get(j));
+                }
+            }
+            processLog.setEmbedDuration(toMillis(embedStart));
+            log.info("Embedding completed: {} new, {} reused", chunksToEmbed.size(), reusedCount);
 
             long persistStart = System.nanoTime();
             knowledgeChunkMapper.delete(
@@ -260,7 +285,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
                         chunkDao.getId(),
                         chunkDao.getContent(),
                         embeddings.get(i),
-                        buildVectorMetadata(doc, chunkDao, embeddings.get(i).length));
+                        buildVectorMetadata(doc, chunkDao, embeddings.get(i).length, chunkResults.get(i).headingPath()));
             }
             processLog.setPersistDuration(toMillis(persistStart));
 
@@ -305,7 +330,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         }
     }
 
-    private Map<String, Object> buildVectorMetadata(KnowledgeDocumentEntity doc, KnowledgeChunkEntity chunkDao, int dimension) {
+    private Map<String, Object> buildVectorMetadata(KnowledgeDocumentEntity doc, KnowledgeChunkEntity chunkDao, int dimension, String headingPath) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("kbId", doc.getKbId());
         metadata.put("docId", doc.getId());
@@ -315,7 +340,25 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         metadata.put("createdBy", doc.getCreatedBy());
         metadata.put("embeddingModel", embeddingProperties.getModel());
         metadata.put("embeddingDimension", dimension);
+        if (headingPath != null) {
+            metadata.put("headingPath", headingPath);
+        }
         return metadata;
+    }
+
+    private Map<String, String> loadExistingChunkHashes(String docId) {
+        Map<String, String> hashMap = new LinkedHashMap<>();
+        List<KnowledgeChunkEntity> existingChunks = knowledgeChunkMapper.selectList(
+                new LambdaQueryWrapper<KnowledgeChunkEntity>()
+                        .eq(KnowledgeChunkEntity::getDocId, docId)
+                        .eq(KnowledgeChunkEntity::getDeleted, 0)
+                        .select(KnowledgeChunkEntity::getId, KnowledgeChunkEntity::getContentHash));
+        for (KnowledgeChunkEntity chunk : existingChunks) {
+            if (chunk.getContentHash() != null) {
+                hashMap.put(chunk.getContentHash(), chunk.getId());
+            }
+        }
+        return hashMap;
     }
 
     private KnowledgeBaseEntity requireKnowledgeBase(String kbId, String userId) {
