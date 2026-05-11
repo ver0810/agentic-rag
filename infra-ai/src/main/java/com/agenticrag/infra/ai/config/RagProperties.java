@@ -14,6 +14,8 @@ public class RagProperties {
     private double keywordWeight = 0.25d;
     private int rrfK = 60;
     private boolean rewriteEnabled = true;
+    private boolean multiQueryEnabled = false;
+    private int multiQueryCount = 3;
     private boolean rerankEnabled = true;
     private String rerankerType = "lexical";
     private String rerankerApiUrl;
@@ -93,6 +95,22 @@ public class RagProperties {
 
     public void setRewriteEnabled(boolean rewriteEnabled) {
         this.rewriteEnabled = rewriteEnabled;
+    }
+
+    public boolean isMultiQueryEnabled() {
+        return multiQueryEnabled;
+    }
+
+    public void setMultiQueryEnabled(boolean multiQueryEnabled) {
+        this.multiQueryEnabled = multiQueryEnabled;
+    }
+
+    public int getMultiQueryCount() {
+        return multiQueryCount;
+    }
+
+    public void setMultiQueryCount(int multiQueryCount) {
+        this.multiQueryCount = multiQueryCount;
     }
 
     public boolean isRerankEnabled() {

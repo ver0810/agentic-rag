@@ -7,11 +7,15 @@ import com.agenticrag.infra.ai.observability.TokenCostEstimator;
 import com.agenticrag.infra.ai.port.embedding.KnowledgeEmbeddingPort;
 import com.agenticrag.infra.ai.port.vector.VectorIndexPort;
 import com.agenticrag.infra.ai.service.AiChatService;
+import com.agenticrag.knowledge.dao.entity.KnowledgeBaseEntity;
+import com.agenticrag.knowledge.dao.mapper.KnowledgeBaseMapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -43,6 +47,7 @@ public class DefaultRagQueryService implements RagQueryService {
     private final RagRerankService ragRerankService;
     private final RagTraceRecorder ragTraceRecorder;
     private final TokenCostEstimator tokenCostEstimator;
+    private final KnowledgeBaseMapper knowledgeBaseMapper;
 
     public DefaultRagQueryService(KnowledgeEmbeddingPort embeddingPort,
                                   VectorIndexPort vectorIndexPort,
@@ -51,7 +56,8 @@ public class DefaultRagQueryService implements RagQueryService {
                                   RagQueryRewriteService ragQueryRewriteService,
                                   RagRerankService ragRerankService,
                                   @Lazy RagTraceRecorder ragTraceRecorder,
-                                  TokenCostEstimator tokenCostEstimator) {
+                                  TokenCostEstimator tokenCostEstimator,
+                                  KnowledgeBaseMapper knowledgeBaseMapper) {
         this.embeddingPort = embeddingPort;
         this.vectorIndexPort = vectorIndexPort;
         this.chatService = chatService;
@@ -60,6 +66,7 @@ public class DefaultRagQueryService implements RagQueryService {
         this.ragRerankService = ragRerankService;
         this.ragTraceRecorder = ragTraceRecorder;
         this.tokenCostEstimator = tokenCostEstimator;
+        this.knowledgeBaseMapper = knowledgeBaseMapper;
     }
 
     @Override
@@ -86,6 +93,7 @@ public class DefaultRagQueryService implements RagQueryService {
     public RagQueryResult queryDetailed(String query, String kbId, String userId, AiRuntimeContext context, int topK) {
         log.info("RAG query: kbId={}, query={}", kbId, query);
         int effectiveTopK = topK > 0 ? topK : ragProperties.getDefaultTopK();
+        double effectiveThreshold = resolveSimilarityThreshold(kbId);
         String traceId = ragTraceRecorder.startRun(
                 "rag_query",
                 "RagQueryService.queryDetailed",
@@ -93,57 +101,90 @@ public class DefaultRagQueryService implements RagQueryService {
                 userId,
                 Map.of("kbId", kbId, "query", query, "topK", effectiveTopK));
         try {
-            String rewrittenQuery = query;
-            if (ragProperties.isRewriteEnabled()) {
+            List<String> queries;
+            if (ragProperties.isRewriteEnabled() && ragProperties.isMultiQueryEnabled()) {
+                String rewriteNodeId = ragTraceRecorder.startNode(traceId, "rewrite", "multi_query_rewrite", Map.of("query", query));
+                try {
+                    queries = ragQueryRewriteService.rewriteMultiple(query, ragProperties.getMultiQueryCount(), userId, context);
+                    ragTraceRecorder.completeNode(traceId, rewriteNodeId, Map.of("queryCount", queries.size(), "queries", queries));
+                } catch (Exception ex) {
+                    ragTraceRecorder.failNode(traceId, rewriteNodeId, ex.getMessage(), Map.of());
+                    queries = List.of(query);
+                }
+            } else if (ragProperties.isRewriteEnabled()) {
                 String rewriteNodeId = ragTraceRecorder.startNode(traceId, "rewrite", "query_rewrite", Map.of("query", query));
                 try {
-                    rewrittenQuery = ragQueryRewriteService.rewrite(query, userId, context);
+                    String rewrittenQuery = ragQueryRewriteService.rewrite(query, userId, context);
+                    queries = List.of(rewrittenQuery);
                     ragTraceRecorder.completeNode(traceId, rewriteNodeId, Map.of("rewrittenQuery", rewrittenQuery));
                 } catch (Exception ex) {
                     ragTraceRecorder.failNode(traceId, rewriteNodeId, ex.getMessage(), Map.of());
-                    throw ex;
+                    queries = List.of(query);
                 }
+            } else {
+                queries = List.of(query);
             }
 
-            String retrieveNodeId = ragTraceRecorder.startNode(traceId, "retrieve", "hybrid_retrieve", Map.of("rewrittenQuery", rewrittenQuery));
-            float[] queryEmbedding;
+            String retrieveNodeId = ragTraceRecorder.startNode(traceId, "retrieve", "hybrid_retrieve", Map.of("queries", queries));
             List<? extends VectorIndexPort.SearchResult> results;
-            int estimatedEmbeddingTokens = tokenCostEstimator.estimateTokens(rewrittenQuery);
-            double estimatedEmbeddingCost = tokenCostEstimator.estimateEmbeddingCost(estimatedEmbeddingTokens);
+            int totalEstimatedEmbeddingTokens = 0;
+            double totalEstimatedEmbeddingCost = 0;
             try {
-                queryEmbedding = embeddingPort.embed(rewrittenQuery);
                 Map<String, Object> filter = Map.of("kbId", kbId);
-                List<? extends VectorIndexPort.SearchResult> vectorResults = vectorIndexPort.search(
-                        queryEmbedding,
-                        Math.max(effectiveTopK, ragProperties.getVectorTopK()),
-                        filter)
-                        .stream()
-                        .filter(r -> r.score() >= ragProperties.getSimilarityThreshold())
-                        .toList();
-                results = vectorResults;
-                int keywordCount = 0;
-                if (ragProperties.isHybridEnabled()) {
-                    List<? extends VectorIndexPort.SearchResult> keywordResults = vectorIndexPort.keywordSearch(
-                            rewrittenQuery,
-                            Math.max(effectiveTopK, ragProperties.getKeywordTopK()),
+                List<List<? extends VectorIndexPort.SearchResult>> allVectorResults = new ArrayList<>();
+                List<List<? extends VectorIndexPort.SearchResult>> allKeywordResults = new ArrayList<>();
+
+                for (String q : queries) {
+                    int estimatedTokens = tokenCostEstimator.estimateTokens(q);
+                    totalEstimatedEmbeddingTokens += estimatedTokens;
+                    totalEstimatedEmbeddingCost += tokenCostEstimator.estimateEmbeddingCost(estimatedTokens);
+
+                    float[] queryEmbedding = embeddingPort.embed(q);
+                    List<? extends VectorIndexPort.SearchResult> vectorResults = vectorIndexPort.search(
+                            queryEmbedding,
+                            Math.max(effectiveTopK, ragProperties.getVectorTopK()),
                             filter)
                             .stream()
-                            .filter(r -> r.score() >= ragProperties.getSimilarityThreshold())
+                            .filter(r -> r.score() >= effectiveThreshold)
                             .toList();
-                    keywordCount = keywordResults.size();
-                    results = mergeResults(vectorResults, keywordResults, effectiveTopK);
-                } else {
-                    results = vectorResults.stream()
-                            .sorted(Comparator.comparing(VectorIndexPort.SearchResult::score).reversed())
-                            .limit(effectiveTopK)
-                            .toList();
+                    allVectorResults.add(vectorResults);
+
+                    if (ragProperties.isHybridEnabled()) {
+                        List<? extends VectorIndexPort.SearchResult> keywordResults = vectorIndexPort.keywordSearch(
+                                q,
+                                Math.max(effectiveTopK, ragProperties.getKeywordTopK()),
+                                filter)
+                                .stream()
+                                .filter(r -> r.score() >= effectiveThreshold)
+                                .toList();
+                        allKeywordResults.add(keywordResults);
+                    }
                 }
+
+                if (queries.size() == 1) {
+                    List<? extends VectorIndexPort.SearchResult> vectorResults = allVectorResults.get(0);
+                    results = vectorResults;
+                    if (ragProperties.isHybridEnabled() && !allKeywordResults.isEmpty()) {
+                        results = mergeResults(vectorResults, allKeywordResults.get(0), effectiveTopK);
+                    } else {
+                        results = vectorResults.stream()
+                                .sorted(Comparator.comparing(VectorIndexPort.SearchResult::score).reversed())
+                                .limit(effectiveTopK)
+                                .toList();
+                    }
+                } else {
+                    results = mergeMultiQueryResults(allVectorResults, allKeywordResults, effectiveTopK);
+                }
+
+                int totalVectorCount = allVectorResults.stream().mapToInt(List::size).sum();
+                int totalKeywordCount = allKeywordResults.stream().mapToInt(List::size).sum();
                 ragTraceRecorder.completeNode(traceId, retrieveNodeId, Map.of(
-                        "vectorResultCount", vectorResults.size(),
-                        "keywordResultCount", keywordCount,
+                        "queryCount", queries.size(),
+                        "vectorResultCount", totalVectorCount,
+                        "keywordResultCount", totalKeywordCount,
                         "filteredResultCount", results.size(),
-                        "estimatedEmbeddingTokens", estimatedEmbeddingTokens,
-                        "estimatedEmbeddingCost", estimatedEmbeddingCost));
+                        "estimatedEmbeddingTokens", totalEstimatedEmbeddingTokens,
+                        "estimatedEmbeddingCost", totalEstimatedEmbeddingCost));
             } catch (Exception ex) {
                 ragTraceRecorder.failNode(traceId, retrieveNodeId, ex.getMessage(), Map.of());
                 throw ex;
@@ -152,7 +193,7 @@ public class DefaultRagQueryService implements RagQueryService {
             if (ragProperties.isRerankEnabled()) {
                 String rerankNodeId = ragTraceRecorder.startNode(traceId, "rerank", "lexical_rerank", Map.of("candidateCount", results.size()));
                 try {
-                    results = ragRerankService.rerank(rewrittenQuery, results, effectiveTopK);
+                    results = ragRerankService.rerank(query, results, effectiveTopK);
                     ragTraceRecorder.completeNode(traceId, rerankNodeId, Map.of("rerankedCount", results.size()));
                 } catch (Exception ex) {
                     ragTraceRecorder.failNode(traceId, rerankNodeId, ex.getMessage(), Map.of());
@@ -167,16 +208,16 @@ public class DefaultRagQueryService implements RagQueryService {
                 RagQueryResult emptyResult = new RagQueryResult(
                         "抱歉，我无法根据现有的知识库内容回答您的问题。请尝试换个问题，或者确认知识库中是否有相关信息。",
                         traceId,
-                        rewrittenQuery,
+                        queries.get(0),
                         List.of(),
                         List.of());
                 ragTraceRecorder.completeRun(traceId, Map.of(
-                        "rewrittenQuery", rewrittenQuery,
+                        "queries", queries,
                         "answerState", "empty_retrieval",
-                        "estimatedEmbeddingTokens", estimatedEmbeddingTokens,
-                        "estimatedEmbeddingCost", estimatedEmbeddingCost,
-                        "estimatedTotalTokens", estimatedEmbeddingTokens,
-                        "estimatedTotalCost", estimatedEmbeddingCost));
+                        "estimatedEmbeddingTokens", totalEstimatedEmbeddingTokens,
+                        "estimatedEmbeddingCost", totalEstimatedEmbeddingCost,
+                        "estimatedTotalTokens", totalEstimatedEmbeddingTokens,
+                        "estimatedTotalCost", totalEstimatedEmbeddingCost));
                 return emptyResult;
             }
 
@@ -211,27 +252,27 @@ public class DefaultRagQueryService implements RagQueryService {
             int estimatedAnswerTokens = tokenCostEstimator.estimateTokens(answer);
             double estimatedChatInputCost = tokenCostEstimator.estimateChatInputCost(estimatedPromptTokens);
             double estimatedChatOutputCost = tokenCostEstimator.estimateChatOutputCost(estimatedAnswerTokens);
-            double estimatedTotalCost = tokenCostEstimator.round6(estimatedEmbeddingCost + estimatedChatInputCost + estimatedChatOutputCost);
+            double estimatedTotalCost = tokenCostEstimator.round6(totalEstimatedEmbeddingCost + estimatedChatInputCost + estimatedChatOutputCost);
             String answerState = determineAnswerState(answer);
 
             RagQueryResult result = new RagQueryResult(
                     answer,
                     traceId,
-                    rewrittenQuery,
+                    queries.get(0),
                     results.stream().map(this::toCitation).toList(),
                     results.stream().map(this::toRetrievedChunk).toList());
             Map<String, Object> runExtraData = new LinkedHashMap<>();
-            runExtraData.put("rewrittenQuery", rewrittenQuery);
+            runExtraData.put("queries", queries);
             runExtraData.put("answerState", answerState);
             runExtraData.put("citationCount", result.citations().size());
             runExtraData.put("retrievedChunkCount", result.retrievedChunks().size());
-            runExtraData.put("estimatedEmbeddingTokens", estimatedEmbeddingTokens);
-            runExtraData.put("estimatedEmbeddingCost", estimatedEmbeddingCost);
+            runExtraData.put("estimatedEmbeddingTokens", totalEstimatedEmbeddingTokens);
+            runExtraData.put("estimatedEmbeddingCost", totalEstimatedEmbeddingCost);
             runExtraData.put("estimatedChatInputTokens", estimatedPromptTokens);
             runExtraData.put("estimatedChatOutputTokens", estimatedAnswerTokens);
             runExtraData.put("estimatedChatInputCost", estimatedChatInputCost);
             runExtraData.put("estimatedChatOutputCost", estimatedChatOutputCost);
-            runExtraData.put("estimatedTotalTokens", estimatedEmbeddingTokens + estimatedPromptTokens + estimatedAnswerTokens);
+            runExtraData.put("estimatedTotalTokens", totalEstimatedEmbeddingTokens + estimatedPromptTokens + estimatedAnswerTokens);
             runExtraData.put("estimatedTotalCost", estimatedTotalCost);
             ragTraceRecorder.completeRun(traceId, runExtraData);
             return result;
@@ -239,6 +280,22 @@ public class DefaultRagQueryService implements RagQueryService {
             ragTraceRecorder.failRun(traceId, ex.getMessage(), Map.of("kbId", kbId, "answerState", "error"));
             throw ex;
         }
+    }
+
+    private double resolveSimilarityThreshold(String kbId) {
+        if (kbId == null) {
+            return ragProperties.getSimilarityThreshold();
+        }
+        KnowledgeBaseEntity kb = knowledgeBaseMapper.selectOne(
+                new LambdaQueryWrapper<KnowledgeBaseEntity>()
+                        .eq(KnowledgeBaseEntity::getId, kbId)
+                        .eq(KnowledgeBaseEntity::getDeleted, 0)
+                        .select(KnowledgeBaseEntity::getSimilarityThreshold)
+                        .last("limit 1"));
+        if (kb != null && kb.getSimilarityThreshold() != null) {
+            return kb.getSimilarityThreshold();
+        }
+        return ragProperties.getSimilarityThreshold();
     }
 
     private String determineAnswerState(String answer) {
@@ -337,6 +394,42 @@ public class DefaultRagQueryService implements RagQueryService {
             double rrfScore = 1.0 / (k + i + 1);
             rrfScores.merge(result.chunkId(), rrfScore, Double::sum);
             resultLookup.putIfAbsent(result.chunkId(), result);
+        }
+
+        return rrfScores.entrySet().stream()
+                .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
+                .limit(topK)
+                .map(entry -> {
+                    VectorIndexPort.SearchResult source = resultLookup.get(entry.getKey());
+                    return new SearchResultView(source.chunkId(), source.content(), entry.getValue().floatValue(), source.metadata());
+                })
+                .toList();
+    }
+
+    private List<? extends VectorIndexPort.SearchResult> mergeMultiQueryResults(
+            List<List<? extends VectorIndexPort.SearchResult>> allVectorResults,
+            List<List<? extends VectorIndexPort.SearchResult>> allKeywordResults,
+            int topK) {
+        int k = ragProperties.getRrfK();
+        Map<String, Double> rrfScores = new LinkedHashMap<>();
+        Map<String, VectorIndexPort.SearchResult> resultLookup = new LinkedHashMap<>();
+
+        for (List<? extends VectorIndexPort.SearchResult> vectorResults : allVectorResults) {
+            for (int i = 0; i < vectorResults.size(); i++) {
+                VectorIndexPort.SearchResult result = vectorResults.get(i);
+                double rrfScore = 1.0 / (k + i + 1);
+                rrfScores.merge(result.chunkId(), rrfScore, Double::sum);
+                resultLookup.putIfAbsent(result.chunkId(), result);
+            }
+        }
+
+        for (List<? extends VectorIndexPort.SearchResult> keywordResults : allKeywordResults) {
+            for (int i = 0; i < keywordResults.size(); i++) {
+                VectorIndexPort.SearchResult result = keywordResults.get(i);
+                double rrfScore = 1.0 / (k + i + 1);
+                rrfScores.merge(result.chunkId(), rrfScore, Double::sum);
+                resultLookup.putIfAbsent(result.chunkId(), result);
+            }
         }
 
         return rrfScores.entrySet().stream()

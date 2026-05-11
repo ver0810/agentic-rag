@@ -15,6 +15,7 @@ public class KnowledgeBaseEntity {
     private String name;
     private String embeddingModel;
     private String collectionName;
+    private Double similarityThreshold;
     private String createdBy;
     private String updatedBy;
     private LocalDateTime createTime;
