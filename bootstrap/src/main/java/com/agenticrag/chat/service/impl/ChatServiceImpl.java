@@ -1,4 +1,4 @@
-package com.agenticrag.service.impl;
+package com.agenticrag.chat.service.impl;
 
 import com.agenticrag.infra.ai.api.chat.AiChatFacade;
 import com.agenticrag.infra.ai.api.chat.ChatRequest;
@@ -6,7 +6,7 @@ import com.agenticrag.infra.ai.api.rag.RagFacade;
 import com.agenticrag.infra.ai.api.rag.RagQueryRequest;
 import com.agenticrag.infra.ai.model.AiChatScene;
 import com.agenticrag.infra.ai.model.AiRuntimeContext;
-import com.agenticrag.service.ChatService;
+import com.agenticrag.chat.service.ChatService;
 import com.agenticrag.user.dao.entity.ConversationEntity;
 import com.agenticrag.user.dao.entity.MessageEntity;
 import com.agenticrag.user.dao.mapper.ConversationMapper;

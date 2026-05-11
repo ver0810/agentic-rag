@@ -1,6 +1,6 @@
-package com.agenticrag.service.controller;
+package com.agenticrag.chat.controller;
 
-import com.agenticrag.service.ChatService;
+import com.agenticrag.chat.service.ChatService;
 import com.agenticrag.user.auth.CurrentUser;
 import com.agenticrag.user.dao.entity.ConversationEntity;
 import com.agenticrag.user.dao.entity.MessageEntity;

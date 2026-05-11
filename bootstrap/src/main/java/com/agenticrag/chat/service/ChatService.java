@@ -1,4 +1,4 @@
-package com.agenticrag.service;
+package com.agenticrag.chat.service;
 
 import com.agenticrag.user.dao.entity.ConversationEntity;
 import com.agenticrag.user.dao.entity.MessageEntity;

@@ -1,4 +1,4 @@
-package com.agenticrag.controller;
+package com.agenticrag.chat.controller;
 
 import com.agenticrag.infra.ai.api.rag.RagFacade;
 import com.agenticrag.infra.ai.model.AiRuntimeContext;
