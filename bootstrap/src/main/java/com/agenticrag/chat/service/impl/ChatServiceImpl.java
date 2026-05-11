@@ -2,8 +2,8 @@ package com.agenticrag.chat.service.impl;
 
 import com.agenticrag.infra.ai.api.chat.AiChatFacade;
 import com.agenticrag.infra.ai.api.chat.ChatRequest;
-import com.agenticrag.infra.ai.api.rag.RagFacade;
-import com.agenticrag.infra.ai.api.rag.RagQueryRequest;
+import com.agenticrag.rag.api.RagFacade;
+import com.agenticrag.rag.api.RagQueryRequest;
 import com.agenticrag.infra.ai.model.AiChatScene;
 import com.agenticrag.infra.ai.model.AiRuntimeContext;
 import com.agenticrag.chat.service.ChatService;

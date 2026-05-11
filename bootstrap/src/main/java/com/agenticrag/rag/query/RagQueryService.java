@@ -1,0 +1,16 @@
+package com.agenticrag.rag.query;
+
+import com.agenticrag.infra.ai.model.AiRuntimeContext;
+
+public interface RagQueryService {
+
+    String query(String query, String kbId, String userId);
+
+    String query(String query, String kbId, String userId, int topK);
+
+    String query(String query, String kbId, String userId, AiRuntimeContext context, int topK);
+
+    RagQueryResult queryDetailed(String query, String kbId, String userId, int topK);
+
+    RagQueryResult queryDetailed(String query, String kbId, String userId, AiRuntimeContext context, int topK);
+}

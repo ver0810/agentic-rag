@@ -1,6 +1,6 @@
 package com.agenticrag.ragtrace.service;
 
-import com.agenticrag.infra.ai.rag.query.RagTraceRecorder;
+import com.agenticrag.rag.query.RagTraceRecorder;
 import com.agenticrag.ragtrace.dto.RagTraceRunDTO;
 
 import java.util.List;

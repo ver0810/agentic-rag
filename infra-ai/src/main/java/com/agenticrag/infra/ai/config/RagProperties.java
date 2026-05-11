@@ -12,8 +12,15 @@ public class RagProperties {
     private double similarityThreshold = 0.55d;
     private double vectorWeight = 0.75d;
     private double keywordWeight = 0.25d;
+    private int rrfK = 60;
     private boolean rewriteEnabled = true;
     private boolean rerankEnabled = true;
+    private String rerankerType = "lexical";
+    private String rerankerApiUrl;
+    private String rerankerApiKey;
+    private String rerankerModel;
+    private double rerankerRetrievalWeight = 0.8d;
+    private double rerankerLexicalWeight = 0.2d;
     private int maxContextChunks = 6;
 
     public boolean isHybridEnabled() {
@@ -72,6 +79,14 @@ public class RagProperties {
         this.keywordWeight = keywordWeight;
     }
 
+    public int getRrfK() {
+        return rrfK;
+    }
+
+    public void setRrfK(int rrfK) {
+        this.rrfK = rrfK;
+    }
+
     public boolean isRewriteEnabled() {
         return rewriteEnabled;
     }
@@ -86,6 +101,54 @@ public class RagProperties {
 
     public void setRerankEnabled(boolean rerankEnabled) {
         this.rerankEnabled = rerankEnabled;
+    }
+
+    public String getRerankerType() {
+        return rerankerType;
+    }
+
+    public void setRerankerType(String rerankerType) {
+        this.rerankerType = rerankerType;
+    }
+
+    public String getRerankerApiUrl() {
+        return rerankerApiUrl;
+    }
+
+    public void setRerankerApiUrl(String rerankerApiUrl) {
+        this.rerankerApiUrl = rerankerApiUrl;
+    }
+
+    public String getRerankerApiKey() {
+        return rerankerApiKey;
+    }
+
+    public void setRerankerApiKey(String rerankerApiKey) {
+        this.rerankerApiKey = rerankerApiKey;
+    }
+
+    public String getRerankerModel() {
+        return rerankerModel;
+    }
+
+    public void setRerankerModel(String rerankerModel) {
+        this.rerankerModel = rerankerModel;
+    }
+
+    public double getRerankerRetrievalWeight() {
+        return rerankerRetrievalWeight;
+    }
+
+    public void setRerankerRetrievalWeight(double rerankerRetrievalWeight) {
+        this.rerankerRetrievalWeight = rerankerRetrievalWeight;
+    }
+
+    public double getRerankerLexicalWeight() {
+        return rerankerLexicalWeight;
+    }
+
+    public void setRerankerLexicalWeight(double rerankerLexicalWeight) {
+        this.rerankerLexicalWeight = rerankerLexicalWeight;
     }
 
     public int getMaxContextChunks() {

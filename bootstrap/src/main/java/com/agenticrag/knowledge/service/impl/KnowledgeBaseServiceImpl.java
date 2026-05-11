@@ -7,7 +7,7 @@ import com.agenticrag.infra.ai.observability.TokenCostEstimator;
 import com.agenticrag.infra.ai.port.embedding.KnowledgeEmbeddingPort;
 import com.agenticrag.infra.ai.port.storage.DocumentStoragePort;
 import com.agenticrag.infra.ai.port.vector.VectorIndexPort;
-import com.agenticrag.infra.ai.rag.parser.DocumentParserFactory;
+import com.agenticrag.rag.parser.DocumentParserFactory;
 import com.agenticrag.knowledge.dao.entity.KnowledgeBaseEntity;
 import com.agenticrag.knowledge.dao.entity.KnowledgeChunkEntity;
 import com.agenticrag.knowledge.dao.entity.KnowledgeDocumentChunkLogEntity;
