@@ -5,7 +5,7 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 @MapperScan({
-        "com.agenticrag.ingestion.dao.mapper",
+        "com.agenticrag.feedback.dao.mapper",
         "com.agenticrag.knowledge.dao.mapper",
         "com.agenticrag.rageval.dao.mapper",
         "com.agenticrag.ragtrace.dao.mapper",

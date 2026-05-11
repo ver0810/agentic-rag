@@ -1,5 +1,6 @@
 package com.agenticrag.feedback;
 
+import com.agenticrag.feedback.dao.mapper.FeedbackMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.springframework.stereotype.Service;
 
