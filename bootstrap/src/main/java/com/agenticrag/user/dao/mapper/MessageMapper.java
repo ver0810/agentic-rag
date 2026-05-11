@@ -1,9 +1,9 @@
 package com.agenticrag.user.dao.mapper;
 
-import com.agenticrag.user.dao.entity.MessageDao;
+import com.agenticrag.user.dao.entity.MessageEntity;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Mapper;
 
 @Mapper
-public interface MessageMapper extends BaseMapper<MessageDao> {
+public interface MessageMapper extends BaseMapper<MessageEntity> {
 }

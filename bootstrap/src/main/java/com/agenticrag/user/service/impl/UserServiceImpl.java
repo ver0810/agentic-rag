@@ -1,6 +1,6 @@
 package com.agenticrag.user.service.impl;
 
-import com.agenticrag.user.dao.entity.UserDao;
+import com.agenticrag.user.dao.entity.UserEntity;
 import com.agenticrag.user.dao.mapper.UserMapper;
 import com.agenticrag.user.dto.*;
 import com.agenticrag.user.auth.AuthenticatedUser;
@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 @Service
-public class UserServiceImpl extends ServiceImpl<UserMapper, UserDao> implements UserService {
+public class UserServiceImpl extends ServiceImpl<UserMapper, UserEntity> implements UserService {
 
     private final JwtTokenService jwtTokenService;
     private final PasswordEncoder passwordEncoder;
@@ -39,10 +39,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDao> implements
         Assert.hasText(request.getPassword(), "密码不能为空");
 
         // 检查用户名是否已存在
-        long count = count(new LambdaQueryWrapper<UserDao>().eq(UserDao::getUsername, request.getUsername()));
+        long count = count(new LambdaQueryWrapper<UserEntity>().eq(UserEntity::getUsername, request.getUsername()));
         Assert.isTrue(count == 0, "用户名已存在");
 
-        UserDao userDao = new UserDao();
+        UserEntity userDao = new UserEntity();
         userDao.setUsername(request.getUsername());
         userDao.setPassword(passwordEncoder.encode(request.getPassword()));
         userDao.setAvatar(request.getAvatar());
@@ -57,8 +57,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDao> implements
         Assert.hasText(request.getUsername(), "用户名不能为空");
         Assert.hasText(request.getPassword(), "密码不能为空");
 
-        UserDao userDao = getOne(new LambdaQueryWrapper<UserDao>()
-                .eq(UserDao::getUsername, request.getUsername()));
+        UserEntity userDao = getOne(new LambdaQueryWrapper<UserEntity>()
+                .eq(UserEntity::getUsername, request.getUsername()));
         Assert.notNull(userDao, "用户名或密码错误");
         Assert.isTrue(matchesPassword(request.getPassword(), userDao.getPassword()), "用户名或密码错误");
 
@@ -82,7 +82,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDao> implements
         Assert.isTrue(!tokenBlacklistService.isBlacklisted(refreshToken), "refreshToken已失效，请重新登录");
 
         AuthenticatedUser user = jwtTokenService.parseRefreshToken(refreshToken);
-        UserDao userDao = getById(user.getUserId());
+        UserEntity userDao = getById(user.getUserId());
         Assert.notNull(userDao, "用户不存在");
 
         tokenBlacklistService.blacklist(refreshToken, jwtTokenService.getExpiration(refreshToken));
@@ -105,7 +105,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDao> implements
         Assert.hasText(request.getOldPassword(), "原密码不能为空");
         Assert.hasText(request.getNewPassword(), "新密码不能为空");
 
-        UserDao userDao = getById(userId);
+        UserEntity userDao = getById(userId);
         Assert.notNull(userDao, "用户不存在");
         Assert.isTrue(matchesPassword(request.getOldPassword(), userDao.getPassword()), "原密码错误");
 
@@ -115,7 +115,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDao> implements
 
     @Override
     public UserDTO getUserInfo(String userId) {
-        UserDao userDao = getById(userId);
+        UserEntity userDao = getById(userId);
         Assert.notNull(userDao, "用户不存在");
         return convertToDTO(userDao);
     }
@@ -125,7 +125,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDao> implements
         return list().stream().map(this::convertToDTO).collect(Collectors.toList());
     }
 
-    private UserDTO convertToDTO(UserDao userDao) {
+    private UserDTO convertToDTO(UserEntity userDao) {
         UserDTO dto = new UserDTO();
         dto.setId(userDao.getId());
         dto.setUsername(userDao.getUsername());

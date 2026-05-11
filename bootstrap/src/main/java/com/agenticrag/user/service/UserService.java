@@ -1,12 +1,12 @@
 package com.agenticrag.user.service;
 
-import com.agenticrag.user.dao.entity.UserDao;
+import com.agenticrag.user.dao.entity.UserEntity;
 import com.agenticrag.user.dto.*;
 import com.baomidou.mybatisplus.extension.service.IService;
 
 import java.util.List;
 
-public interface UserService extends IService<UserDao> {
+public interface UserService extends IService<UserEntity> {
 
     /**
      * 用户注册

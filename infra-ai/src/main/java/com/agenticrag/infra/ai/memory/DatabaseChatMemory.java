@@ -1,5 +1,6 @@
 package com.agenticrag.infra.ai.memory;
 
+import com.agenticrag.infra.ai.port.memory.ConversationMemoryPort;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
@@ -12,11 +13,11 @@ import java.util.stream.Collectors;
 public class DatabaseChatMemory implements ChatMemory {
 
 
-    private final ChatMemoryRepository chatMemoryRepository;
+    private final ConversationMemoryPort conversationMemoryPort;
     private final int maxMessages;
 
-    public DatabaseChatMemory(ChatMemoryRepository chatMemoryRepository, int maxMessages) {
-        this.chatMemoryRepository = chatMemoryRepository;
+    public DatabaseChatMemory(ConversationMemoryPort conversationMemoryPort, int maxMessages) {
+        this.conversationMemoryPort = conversationMemoryPort;
         this.maxMessages = maxMessages;
     }
 
@@ -27,13 +28,13 @@ public class DatabaseChatMemory implements ChatMemory {
 
     @Override
     public List<Message> get(String conversationId) {
-        return chatMemoryRepository.getRecentMessages(conversationId, maxMessages)
+        return conversationMemoryPort.getRecentMessages(conversationId, maxMessages)
                 .stream()
                 .map(this::convertToMessage)
                 .collect(Collectors.toList());
     }
 
-    private Message convertToMessage(ChatMemoryRepository.ChatMessage chatMessage) {
+    private Message convertToMessage(ConversationMemoryPort.MemoryMessage chatMessage) {
 
         return switch (chatMessage.role().toLowerCase()) {
             case "user" -> new UserMessage(chatMessage.content());

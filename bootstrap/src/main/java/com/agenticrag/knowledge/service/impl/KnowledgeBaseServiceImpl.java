@@ -1,17 +1,17 @@
 package com.agenticrag.knowledge.service.impl;
 
 import com.agenticrag.common.ApiException;
-import com.agenticrag.ingestion.service.IngestionTaskService;
+import com.agenticrag.knowledge.service.IngestionTaskService;
 import com.agenticrag.infra.ai.config.EmbeddingProperties;
 import com.agenticrag.infra.ai.observability.TokenCostEstimator;
+import com.agenticrag.infra.ai.port.embedding.KnowledgeEmbeddingPort;
+import com.agenticrag.infra.ai.port.storage.DocumentStoragePort;
+import com.agenticrag.infra.ai.port.vector.VectorIndexPort;
 import com.agenticrag.infra.ai.rag.parser.DocumentParserFactory;
-import com.agenticrag.infra.ai.rag.vector.VectorStore;
-import com.agenticrag.infra.ai.service.KnowledgeEmbeddingService;
-import com.agenticrag.infra.ai.storage.FileStorageService;
-import com.agenticrag.knowledge.dao.entity.KnowledgeBaseDao;
-import com.agenticrag.knowledge.dao.entity.KnowledgeChunkDao;
-import com.agenticrag.knowledge.dao.entity.KnowledgeDocumentChunkLogDao;
-import com.agenticrag.knowledge.dao.entity.KnowledgeDocumentDao;
+import com.agenticrag.knowledge.dao.entity.KnowledgeBaseEntity;
+import com.agenticrag.knowledge.dao.entity.KnowledgeChunkEntity;
+import com.agenticrag.knowledge.dao.entity.KnowledgeDocumentChunkLogEntity;
+import com.agenticrag.knowledge.dao.entity.KnowledgeDocumentEntity;
 import com.agenticrag.knowledge.dao.mapper.KnowledgeBaseMapper;
 import com.agenticrag.knowledge.dao.mapper.KnowledgeChunkMapper;
 import com.agenticrag.knowledge.dao.mapper.KnowledgeDocumentChunkLogMapper;
@@ -45,10 +45,10 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     private final KnowledgeDocumentMapper knowledgeDocumentMapper;
     private final KnowledgeDocumentChunkLogMapper knowledgeDocumentChunkLogMapper;
     private final KnowledgeChunkMapper knowledgeChunkMapper;
-    private final FileStorageService fileStorageService;
+    private final DocumentStoragePort documentStoragePort;
     private final DocumentParserFactory documentParserFactory;
-    private final KnowledgeEmbeddingService knowledgeEmbeddingService;
-    private final VectorStore vectorStore;
+    private final KnowledgeEmbeddingPort knowledgeEmbeddingPort;
+    private final VectorIndexPort vectorIndexPort;
     private final EmbeddingProperties embeddingProperties;
     private final DocumentChunkingService documentChunkingService;
     private final IngestionTaskService ingestionTaskService;
@@ -58,10 +58,10 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
                                     KnowledgeDocumentMapper knowledgeDocumentMapper,
                                     KnowledgeDocumentChunkLogMapper knowledgeDocumentChunkLogMapper,
                                     KnowledgeChunkMapper knowledgeChunkMapper,
-                                    FileStorageService fileStorageService,
+                                    DocumentStoragePort documentStoragePort,
                                     DocumentParserFactory documentParserFactory,
-                                    KnowledgeEmbeddingService knowledgeEmbeddingService,
-                                    VectorStore vectorStore,
+                                    KnowledgeEmbeddingPort knowledgeEmbeddingPort,
+                                    VectorIndexPort vectorIndexPort,
                                     EmbeddingProperties embeddingProperties,
                                     DocumentChunkingService documentChunkingService,
                                     IngestionTaskService ingestionTaskService,
@@ -70,10 +70,10 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         this.knowledgeDocumentMapper = knowledgeDocumentMapper;
         this.knowledgeDocumentChunkLogMapper = knowledgeDocumentChunkLogMapper;
         this.knowledgeChunkMapper = knowledgeChunkMapper;
-        this.fileStorageService = fileStorageService;
+        this.documentStoragePort = documentStoragePort;
         this.documentParserFactory = documentParserFactory;
-        this.knowledgeEmbeddingService = knowledgeEmbeddingService;
-        this.vectorStore = vectorStore;
+        this.knowledgeEmbeddingPort = knowledgeEmbeddingPort;
+        this.vectorIndexPort = vectorIndexPort;
         this.embeddingProperties = embeddingProperties;
         this.documentChunkingService = documentChunkingService;
         this.ingestionTaskService = ingestionTaskService;
@@ -82,7 +82,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
     @Override
     @Transactional
-    public KnowledgeBaseDao create(KnowledgeBaseDao knowledgeBase) {
+    public KnowledgeBaseEntity create(KnowledgeBaseEntity knowledgeBase) {
         knowledgeBase.setCreateTime(LocalDateTime.now());
         knowledgeBase.setUpdateTime(LocalDateTime.now());
         knowledgeBase.setDeleted(0);
@@ -91,43 +91,43 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     }
 
     @Override
-    public KnowledgeBaseDao getById(String id, String userId) {
+    public KnowledgeBaseEntity getById(String id, String userId) {
         return requireKnowledgeBase(id, userId);
     }
 
     @Override
-    public List<KnowledgeBaseDao> list(String userId) {
+    public List<KnowledgeBaseEntity> list(String userId) {
         return knowledgeBaseMapper.selectList(
-                new LambdaQueryWrapper<KnowledgeBaseDao>()
-                        .eq(KnowledgeBaseDao::getCreatedBy, userId)
-                        .eq(KnowledgeBaseDao::getDeleted, 0)
-                        .orderByDesc(KnowledgeBaseDao::getCreateTime));
+                new LambdaQueryWrapper<KnowledgeBaseEntity>()
+                        .eq(KnowledgeBaseEntity::getCreatedBy, userId)
+                        .eq(KnowledgeBaseEntity::getDeleted, 0)
+                        .orderByDesc(KnowledgeBaseEntity::getCreateTime));
     }
 
     @Override
     @Transactional
     public void delete(String id, String userId) {
-        KnowledgeBaseDao kb = requireKnowledgeBase(id, userId);
+        KnowledgeBaseEntity kb = requireKnowledgeBase(id, userId);
         kb.setDeleted(1);
         kb.setUpdateTime(LocalDateTime.now());
         knowledgeBaseMapper.updateById(kb);
 
         knowledgeDocumentMapper.update(
                 null,
-                new LambdaUpdateWrapper<KnowledgeDocumentDao>()
-                        .eq(KnowledgeDocumentDao::getKbId, id)
-                        .set(KnowledgeDocumentDao::getDeleted, 1));
+                new LambdaUpdateWrapper<KnowledgeDocumentEntity>()
+                        .eq(KnowledgeDocumentEntity::getKbId, id)
+                        .set(KnowledgeDocumentEntity::getDeleted, 1));
         knowledgeChunkMapper.delete(
-                new LambdaQueryWrapper<KnowledgeChunkDao>()
-                        .eq(KnowledgeChunkDao::getKbId, id));
-        vectorStore.deleteByKbId(id);
+                new LambdaQueryWrapper<KnowledgeChunkEntity>()
+                        .eq(KnowledgeChunkEntity::getKbId, id));
+        vectorIndexPort.deleteByKbId(id);
     }
 
     @Override
     @Transactional
-    public KnowledgeDocumentDao uploadDocument(String kbId, String fileName, String fileType, long fileSize, String fileUrl, String userId) {
+    public KnowledgeDocumentEntity uploadDocument(String kbId, String fileName, String fileType, long fileSize, String fileUrl, String userId) {
         requireKnowledgeBase(kbId, userId);
-        KnowledgeDocumentDao document = new KnowledgeDocumentDao();
+        KnowledgeDocumentEntity document = new KnowledgeDocumentEntity();
         document.setKbId(kbId);
         document.setDocName(fileName);
         document.setFileType(fileType);
@@ -137,7 +137,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         document.setStatus("pending");
         document.setProcessMode("chunk");
         document.setChunkStrategy("paragraph");
-        document.setChunkConfig("{\"maxChars\":900,\"overlapParagraphs\":1,\"minChunkChars\":180}");
+        document.setChunkConfig(null);
         document.setChunkCount(0);
         document.setCreatedBy(userId);
         document.setCreateTime(LocalDateTime.now());
@@ -148,35 +148,35 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     }
 
     @Override
-    public List<KnowledgeDocumentDao> listDocuments(String kbId, String userId) {
+    public List<KnowledgeDocumentEntity> listDocuments(String kbId, String userId) {
         requireKnowledgeBase(kbId, userId);
         return knowledgeDocumentMapper.selectList(
-                new LambdaQueryWrapper<KnowledgeDocumentDao>()
-                        .eq(KnowledgeDocumentDao::getKbId, kbId)
-                        .eq(KnowledgeDocumentDao::getCreatedBy, userId)
-                        .eq(KnowledgeDocumentDao::getDeleted, 0)
-                        .orderByDesc(KnowledgeDocumentDao::getCreateTime));
+                new LambdaQueryWrapper<KnowledgeDocumentEntity>()
+                        .eq(KnowledgeDocumentEntity::getKbId, kbId)
+                        .eq(KnowledgeDocumentEntity::getCreatedBy, userId)
+                        .eq(KnowledgeDocumentEntity::getDeleted, 0)
+                        .orderByDesc(KnowledgeDocumentEntity::getCreateTime));
     }
 
     @Override
     @Transactional
     public void deleteDocument(String docId, String userId) {
-        KnowledgeDocumentDao doc = requireDocument(docId, userId);
+        KnowledgeDocumentEntity doc = requireDocument(docId, userId);
         doc.setDeleted(1);
         doc.setUpdateTime(LocalDateTime.now());
         knowledgeDocumentMapper.updateById(doc);
 
         knowledgeChunkMapper.delete(
-                new LambdaQueryWrapper<KnowledgeChunkDao>()
-                        .eq(KnowledgeChunkDao::getDocId, docId));
-        vectorStore.deleteByDocId(docId);
-        fileStorageService.delete(doc.getFileUrl());
+                new LambdaQueryWrapper<KnowledgeChunkEntity>()
+                        .eq(KnowledgeChunkEntity::getDocId, docId));
+        vectorIndexPort.deleteByDocId(docId);
+        documentStoragePort.delete(doc.getFileUrl());
     }
 
     @Override
     @Transactional
     public String enqueueProcessDocument(String docId, String userId) {
-        KnowledgeDocumentDao doc = requireDocument(docId, userId);
+        KnowledgeDocumentEntity doc = requireDocument(docId, userId);
         String status = normalizeStatus(doc.getStatus());
         if ("queued".equals(status) || "running".equals(status)) {
             throw ApiException.badRequest("document_processing_in_progress", "文档正在处理中，请稍后再试");
@@ -190,7 +190,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     @Override
     @Transactional
     public void processDocument(String docId) {
-        KnowledgeDocumentDao doc = knowledgeDocumentMapper.selectById(docId);
+        KnowledgeDocumentEntity doc = knowledgeDocumentMapper.selectById(docId);
         if (doc == null) {
             throw ApiException.notFound("knowledge_document_not_found", "Document not found: " + docId);
         }
@@ -199,14 +199,14 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         doc.setUpdateTime(LocalDateTime.now());
         knowledgeDocumentMapper.updateById(doc);
 
-        KnowledgeDocumentChunkLogDao processLog = createProcessLog(doc);
+        KnowledgeDocumentChunkLogEntity processLog = createProcessLog(doc);
         long totalStart = System.nanoTime();
         try {
             log.info("Starting document processing: docId={}, fileUrl={}, fileType={}", docId, doc.getFileUrl(), doc.getFileType());
 
             long extractStart = System.nanoTime();
             String content;
-            try (InputStream fileStream = fileStorageService.load(doc.getFileUrl())) {
+            try (InputStream fileStream = documentStoragePort.load(doc.getFileUrl())) {
                 log.info("File loaded successfully");
                 var parser = documentParserFactory.getParser(doc.getFileType());
                 log.info("Parser found: {}", parser.getClass().getSimpleName());
@@ -226,7 +226,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             }
 
             long embedStart = System.nanoTime();
-            List<float[]> embeddings = knowledgeEmbeddingService.embedAll(new ArrayList<>(chunks));
+            List<float[]> embeddings = knowledgeEmbeddingPort.embedAll(new ArrayList<>(chunks));
             processLog.setEmbedDuration(toMillis(embedStart));
             log.info("Embedding completed, got {} vectors", embeddings.size());
 
@@ -236,12 +236,12 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
             long persistStart = System.nanoTime();
             knowledgeChunkMapper.delete(
-                    new LambdaQueryWrapper<KnowledgeChunkDao>()
-                            .eq(KnowledgeChunkDao::getDocId, docId));
-            vectorStore.deleteByDocId(docId);
+                    new LambdaQueryWrapper<KnowledgeChunkEntity>()
+                            .eq(KnowledgeChunkEntity::getDocId, docId));
+            vectorIndexPort.deleteByDocId(docId);
 
             for (int i = 0; i < chunks.size(); i++) {
-                KnowledgeChunkDao chunkDao = new KnowledgeChunkDao();
+                KnowledgeChunkEntity chunkDao = new KnowledgeChunkEntity();
                 chunkDao.setKbId(doc.getKbId());
                 chunkDao.setDocId(docId);
                 chunkDao.setChunkIndex(i);
@@ -256,7 +256,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
                 chunkDao.setDeleted(0);
                 knowledgeChunkMapper.insert(chunkDao);
 
-                vectorStore.store(
+                vectorIndexPort.store(
                         chunkDao.getId(),
                         chunkDao.getContent(),
                         embeddings.get(i),
@@ -283,7 +283,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
     @Override
     public Integer getDocumentChunkCount(String docId) {
-        KnowledgeDocumentDao doc = knowledgeDocumentMapper.selectById(docId);
+        KnowledgeDocumentEntity doc = knowledgeDocumentMapper.selectById(docId);
         return doc == null ? 0 : doc.getChunkCount();
     }
 
@@ -305,7 +305,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         }
     }
 
-    private Map<String, Object> buildVectorMetadata(KnowledgeDocumentDao doc, KnowledgeChunkDao chunkDao, int dimension) {
+    private Map<String, Object> buildVectorMetadata(KnowledgeDocumentEntity doc, KnowledgeChunkEntity chunkDao, int dimension) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("kbId", doc.getKbId());
         metadata.put("docId", doc.getId());
@@ -318,15 +318,15 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         return metadata;
     }
 
-    private KnowledgeBaseDao requireKnowledgeBase(String kbId, String userId) {
+    private KnowledgeBaseEntity requireKnowledgeBase(String kbId, String userId) {
         if (!StringUtils.hasText(userId)) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "unauthorized", "用户未登录");
         }
-        KnowledgeBaseDao kb = knowledgeBaseMapper.selectOne(
-                new LambdaQueryWrapper<KnowledgeBaseDao>()
-                        .eq(KnowledgeBaseDao::getId, kbId)
-                        .eq(KnowledgeBaseDao::getCreatedBy, userId)
-                        .eq(KnowledgeBaseDao::getDeleted, 0)
+        KnowledgeBaseEntity kb = knowledgeBaseMapper.selectOne(
+                new LambdaQueryWrapper<KnowledgeBaseEntity>()
+                        .eq(KnowledgeBaseEntity::getId, kbId)
+                        .eq(KnowledgeBaseEntity::getCreatedBy, userId)
+                        .eq(KnowledgeBaseEntity::getDeleted, 0)
                         .last("limit 1"));
         if (kb == null) {
             throw ApiException.notFound("knowledge_base_not_found", "知识库不存在或无权访问");
@@ -334,15 +334,15 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         return kb;
     }
 
-    private KnowledgeDocumentDao requireDocument(String docId, String userId) {
+    private KnowledgeDocumentEntity requireDocument(String docId, String userId) {
         if (!StringUtils.hasText(userId)) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "unauthorized", "用户未登录");
         }
-        KnowledgeDocumentDao doc = knowledgeDocumentMapper.selectOne(
-                new LambdaQueryWrapper<KnowledgeDocumentDao>()
-                        .eq(KnowledgeDocumentDao::getId, docId)
-                        .eq(KnowledgeDocumentDao::getCreatedBy, userId)
-                        .eq(KnowledgeDocumentDao::getDeleted, 0)
+        KnowledgeDocumentEntity doc = knowledgeDocumentMapper.selectOne(
+                new LambdaQueryWrapper<KnowledgeDocumentEntity>()
+                        .eq(KnowledgeDocumentEntity::getId, docId)
+                        .eq(KnowledgeDocumentEntity::getCreatedBy, userId)
+                        .eq(KnowledgeDocumentEntity::getDeleted, 0)
                         .last("limit 1"));
         if (doc == null) {
             throw ApiException.notFound("knowledge_document_not_found", "知识文档不存在或无权访问");
@@ -350,8 +350,8 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         return doc;
     }
 
-    private KnowledgeDocumentChunkLogDao createProcessLog(KnowledgeDocumentDao doc) {
-        KnowledgeDocumentChunkLogDao logDao = new KnowledgeDocumentChunkLogDao();
+    private KnowledgeDocumentChunkLogEntity createProcessLog(KnowledgeDocumentEntity doc) {
+        KnowledgeDocumentChunkLogEntity logDao = new KnowledgeDocumentChunkLogEntity();
         logDao.setDocId(doc.getId());
         logDao.setStatus("running");
         logDao.setProcessMode(doc.getProcessMode());
@@ -364,7 +364,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         return logDao;
     }
 
-    private void completeProcessLog(KnowledgeDocumentChunkLogDao logDao, String status, String errorMessage, long totalStart) {
+    private void completeProcessLog(KnowledgeDocumentChunkLogEntity logDao, String status, String errorMessage, long totalStart) {
         logDao.setStatus(status);
         logDao.setErrorMessage(errorMessage);
         logDao.setTotalDuration(toMillis(totalStart));

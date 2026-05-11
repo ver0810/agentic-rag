@@ -1,6 +1,6 @@
 package com.agenticrag.infra.ai.rag.query;
 
-import com.agenticrag.infra.ai.rag.vector.VectorStore;
+import com.agenticrag.infra.ai.port.vector.VectorIndexPort;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -9,14 +9,15 @@ import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 @Service
 public class RagRerankService {
 
-    public List<VectorStore.VectorSearchResult> rerank(String query,
-                                                       List<VectorStore.VectorSearchResult> results,
-                                                       int topK) {
+    public List<RankedSearchResult> rerank(String query,
+                                           List<? extends VectorIndexPort.SearchResult> results,
+                                           int topK) {
         if (results == null || results.isEmpty()) {
             return List.of();
         }
@@ -29,7 +30,7 @@ public class RagRerankService {
                 .toList();
     }
 
-    private float blendScore(VectorStore.VectorSearchResult result, List<String> terms) {
+    private float blendScore(VectorIndexPort.SearchResult result, List<String> terms) {
         float lexical = lexicalScore(result.content(), terms);
         return result.score() * 0.8f + lexical * 0.2f;
     }
@@ -74,9 +75,12 @@ public class RagRerankService {
         return new ArrayList<>(terms);
     }
 
-    private record RankedResult(VectorStore.VectorSearchResult source, float score) {
-        private VectorStore.VectorSearchResult toResult() {
-            return new VectorStore.VectorSearchResult(source.chunkId(), source.content(), score, source.metadata());
+    public record RankedSearchResult(String chunkId, String content, float score, Map<String, Object> metadata)
+            implements VectorIndexPort.SearchResult {}
+
+    private record RankedResult(VectorIndexPort.SearchResult source, float score) {
+        private RankedSearchResult toResult() {
+            return new RankedSearchResult(source.chunkId(), source.content(), score, source.metadata());
         }
     }
 }

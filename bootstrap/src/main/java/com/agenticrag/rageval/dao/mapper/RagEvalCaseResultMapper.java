@@ -1,7 +1,7 @@
 package com.agenticrag.rageval.dao.mapper;
 
-import com.agenticrag.rageval.dao.entity.RagEvalCaseResultDao;
+import com.agenticrag.rageval.dao.entity.RagEvalCaseResultEntity;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 
-public interface RagEvalCaseResultMapper extends BaseMapper<RagEvalCaseResultDao> {
+public interface RagEvalCaseResultMapper extends BaseMapper<RagEvalCaseResultEntity> {
 }

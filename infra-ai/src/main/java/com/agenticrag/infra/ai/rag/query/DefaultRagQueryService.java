@@ -4,9 +4,9 @@ import com.agenticrag.infra.ai.config.RagProperties;
 import com.agenticrag.infra.ai.model.AiChatScene;
 import com.agenticrag.infra.ai.model.AiRuntimeContext;
 import com.agenticrag.infra.ai.observability.TokenCostEstimator;
-import com.agenticrag.infra.ai.rag.vector.VectorStore;
+import com.agenticrag.infra.ai.port.embedding.KnowledgeEmbeddingPort;
+import com.agenticrag.infra.ai.port.vector.VectorIndexPort;
 import com.agenticrag.infra.ai.service.AiChatService;
-import com.agenticrag.infra.ai.service.KnowledgeEmbeddingService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -22,15 +22,6 @@ import java.util.stream.Collectors;
 @Service
 public class DefaultRagQueryService implements RagQueryService {
 
-    private final KnowledgeEmbeddingService embeddingService;
-    private final VectorStore vectorStore;
-    private final AiChatService chatService;
-    private final RagProperties ragProperties;
-    private final RagQueryRewriteService ragQueryRewriteService;
-    private final RagRerankService ragRerankService;
-    private final RagTraceRecorder ragTraceRecorder;
-    private final TokenCostEstimator tokenCostEstimator;
-
     private static final String DEFAULT_PROMPT_TEMPLATE = """
             你是一个严格基于证据回答问题的知识库助手。
             请只依据以下证据回答用户问题；如果证据不足，请明确说明无法确认。
@@ -44,16 +35,25 @@ public class DefaultRagQueryService implements RagQueryService {
             回答：
             """;
 
-    public DefaultRagQueryService(KnowledgeEmbeddingService embeddingService,
-                                  VectorStore vectorStore,
+    private final KnowledgeEmbeddingPort embeddingPort;
+    private final VectorIndexPort vectorIndexPort;
+    private final AiChatService chatService;
+    private final RagProperties ragProperties;
+    private final RagQueryRewriteService ragQueryRewriteService;
+    private final RagRerankService ragRerankService;
+    private final RagTraceRecorder ragTraceRecorder;
+    private final TokenCostEstimator tokenCostEstimator;
+
+    public DefaultRagQueryService(KnowledgeEmbeddingPort embeddingPort,
+                                  VectorIndexPort vectorIndexPort,
                                   @Lazy AiChatService chatService,
                                   RagProperties ragProperties,
                                   RagQueryRewriteService ragQueryRewriteService,
                                   RagRerankService ragRerankService,
                                   @Lazy RagTraceRecorder ragTraceRecorder,
                                   TokenCostEstimator tokenCostEstimator) {
-        this.embeddingService = embeddingService;
-        this.vectorStore = vectorStore;
+        this.embeddingPort = embeddingPort;
+        this.vectorIndexPort = vectorIndexPort;
         this.chatService = chatService;
         this.ragProperties = ragProperties;
         this.ragQueryRewriteService = ragQueryRewriteService;
@@ -107,20 +107,20 @@ public class DefaultRagQueryService implements RagQueryService {
 
             String retrieveNodeId = ragTraceRecorder.startNode(traceId, "retrieve", "hybrid_retrieve", Map.of("rewrittenQuery", rewrittenQuery));
             float[] queryEmbedding;
-            List<VectorStore.VectorSearchResult> results;
+            List<? extends VectorIndexPort.SearchResult> results;
             int estimatedEmbeddingTokens = tokenCostEstimator.estimateTokens(rewrittenQuery);
             double estimatedEmbeddingCost = tokenCostEstimator.estimateEmbeddingCost(estimatedEmbeddingTokens);
             try {
-                queryEmbedding = embeddingService.embed(rewrittenQuery);
+                queryEmbedding = embeddingPort.embed(rewrittenQuery);
                 Map<String, Object> filter = Map.of("kbId", kbId);
-                List<VectorStore.VectorSearchResult> vectorResults = vectorStore.search(
+                List<? extends VectorIndexPort.SearchResult> vectorResults = vectorIndexPort.search(
                         queryEmbedding,
                         Math.max(effectiveTopK, ragProperties.getVectorTopK()),
                         filter);
                 results = vectorResults;
                 int keywordCount = 0;
                 if (ragProperties.isHybridEnabled()) {
-                    List<VectorStore.VectorSearchResult> keywordResults = vectorStore.keywordSearch(
+                    List<? extends VectorIndexPort.SearchResult> keywordResults = vectorIndexPort.keywordSearch(
                             rewrittenQuery,
                             Math.max(effectiveTopK, ragProperties.getKeywordTopK()),
                             filter);
@@ -128,7 +128,7 @@ public class DefaultRagQueryService implements RagQueryService {
                     results = mergeResults(vectorResults, keywordResults, effectiveTopK);
                 } else {
                     results = vectorResults.stream()
-                            .sorted(Comparator.comparing(VectorStore.VectorSearchResult::score).reversed())
+                            .sorted(Comparator.comparing(VectorIndexPort.SearchResult::score).reversed())
                             .limit(effectiveTopK)
                             .toList();
                 }
@@ -191,7 +191,7 @@ public class DefaultRagQueryService implements RagQueryService {
             String answer;
             try {
                 String conversationId = "rag:" + kbId + ":" + (userId == null ? "anonymous" : userId);
-                answer = chatService.call(AiChatScene.RAG_QA, prompt, context, conversationId, userId, null);
+                answer = chatService.call(AiChatScene.RAG_QA, prompt, context, conversationId, userId);
                 int estimatedAnswerTokens = tokenCostEstimator.estimateTokens(answer);
                 ragTraceRecorder.completeNode(traceId, generateNodeId, Map.of(
                         "promptLength", prompt.length(),
@@ -258,7 +258,7 @@ public class DefaultRagQueryService implements RagQueryService {
         return "answered";
     }
 
-    private RagQueryResult.Citation toCitation(VectorStore.VectorSearchResult result) {
+    private RagQueryResult.Citation toCitation(VectorIndexPort.SearchResult result) {
         return new RagQueryResult.Citation(
                 result.chunkId(),
                 metadataValue(result, "docId"),
@@ -268,7 +268,7 @@ public class DefaultRagQueryService implements RagQueryService {
                 abbreviate(result.content(), 200));
     }
 
-    private RagQueryResult.RetrievedChunk toRetrievedChunk(VectorStore.VectorSearchResult result) {
+    private RagQueryResult.RetrievedChunk toRetrievedChunk(VectorIndexPort.SearchResult result) {
         return new RagQueryResult.RetrievedChunk(
                 result.chunkId(),
                 metadataValue(result, "docId"),
@@ -278,12 +278,12 @@ public class DefaultRagQueryService implements RagQueryService {
                 result.content());
     }
 
-    private String metadataValue(VectorStore.VectorSearchResult result, String key) {
+    private String metadataValue(VectorIndexPort.SearchResult result, String key) {
         Object value = result.metadata().get(key);
         return value == null ? null : String.valueOf(value);
     }
 
-    private Integer metadataIntegerValue(VectorStore.VectorSearchResult result, String key) {
+    private Integer metadataIntegerValue(VectorIndexPort.SearchResult result, String key) {
         Object value = result.metadata().get(key);
         if (value instanceof Number number) {
             return number.intValue();
@@ -305,7 +305,7 @@ public class DefaultRagQueryService implements RagQueryService {
         return value.substring(0, maxLength);
     }
 
-    private String toEvidenceBlock(VectorStore.VectorSearchResult result) {
+    private String toEvidenceBlock(VectorIndexPort.SearchResult result) {
         Integer chunkIndex = metadataIntegerValue(result, "chunkIndex");
         String docName = metadataValue(result, "docName");
         String label = chunkIndex == null ? result.chunkId() : String.valueOf(chunkIndex + 1);
@@ -315,14 +315,14 @@ public class DefaultRagQueryService implements RagQueryService {
                 + result.content();
     }
 
-    private List<VectorStore.VectorSearchResult> mergeResults(List<VectorStore.VectorSearchResult> vectorResults,
-                                                              List<VectorStore.VectorSearchResult> keywordResults,
-                                                              int topK) {
+    private List<SearchResultView> mergeResults(List<? extends VectorIndexPort.SearchResult> vectorResults,
+                                                List<? extends VectorIndexPort.SearchResult> keywordResults,
+                                                int topK) {
         Map<String, ScoredResult> merged = new LinkedHashMap<>();
-        for (VectorStore.VectorSearchResult result : vectorResults) {
+        for (VectorIndexPort.SearchResult result : vectorResults) {
             merged.put(result.chunkId(), new ScoredResult(result, result.score() * (float) ragProperties.getVectorWeight()));
         }
-        for (VectorStore.VectorSearchResult result : keywordResults) {
+        for (VectorIndexPort.SearchResult result : keywordResults) {
             float keywordScore = result.score() * (float) ragProperties.getKeywordWeight();
             ScoredResult existing = merged.get(result.chunkId());
             if (existing == null) {
@@ -338,17 +338,20 @@ public class DefaultRagQueryService implements RagQueryService {
                 .toList();
     }
 
+    private record SearchResultView(String chunkId, String content, float score, Map<String, Object> metadata)
+            implements VectorIndexPort.SearchResult {}
+
     private static class ScoredResult {
-        private final VectorStore.VectorSearchResult source;
+        private final VectorIndexPort.SearchResult source;
         private float score;
 
-        private ScoredResult(VectorStore.VectorSearchResult source, float score) {
+        private ScoredResult(VectorIndexPort.SearchResult source, float score) {
             this.source = source;
             this.score = score;
         }
 
-        private VectorStore.VectorSearchResult toResult() {
-            return new VectorStore.VectorSearchResult(source.chunkId(), source.content(), score, source.metadata());
+        private SearchResultView toResult() {
+            return new SearchResultView(source.chunkId(), source.content(), score, source.metadata());
         }
     }
 }

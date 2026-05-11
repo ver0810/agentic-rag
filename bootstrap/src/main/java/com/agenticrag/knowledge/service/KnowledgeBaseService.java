@@ -1,23 +1,23 @@
 package com.agenticrag.knowledge.service;
 
-import com.agenticrag.knowledge.dao.entity.KnowledgeBaseDao;
-import com.agenticrag.knowledge.dao.entity.KnowledgeDocumentDao;
+import com.agenticrag.knowledge.dao.entity.KnowledgeBaseEntity;
+import com.agenticrag.knowledge.dao.entity.KnowledgeDocumentEntity;
 
 import java.util.List;
 
 public interface KnowledgeBaseService {
 
-    KnowledgeBaseDao create(KnowledgeBaseDao knowledgeBase);
+    KnowledgeBaseEntity create(KnowledgeBaseEntity knowledgeBase);
 
-    KnowledgeBaseDao getById(String id, String userId);
+    KnowledgeBaseEntity getById(String id, String userId);
 
-    List<KnowledgeBaseDao> list(String userId);
+    List<KnowledgeBaseEntity> list(String userId);
 
     void delete(String id, String userId);
 
-    KnowledgeDocumentDao uploadDocument(String kbId, String fileName, String fileType, long fileSize, String fileUrl, String userId);
+    KnowledgeDocumentEntity uploadDocument(String kbId, String fileName, String fileType, long fileSize, String fileUrl, String userId);
 
-    List<KnowledgeDocumentDao> listDocuments(String kbId, String userId);
+    List<KnowledgeDocumentEntity> listDocuments(String kbId, String userId);
 
     void deleteDocument(String docId, String userId);
 

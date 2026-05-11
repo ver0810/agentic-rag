@@ -12,7 +12,7 @@ import com.agenticrag.user.ai.dto.AiSettingsDTO;
 import com.agenticrag.user.ai.dto.AiSettingsSaveRequest;
 import com.agenticrag.user.ai.dto.AiSettingsVerifyRequest;
 import com.agenticrag.user.ai.dto.AiSettingsVerifyResponse;
-import com.agenticrag.user.dao.entity.UserAiProviderConfigDao;
+import com.agenticrag.user.dao.entity.UserAiProviderConfigEntity;
 import com.agenticrag.user.dao.mapper.UserAiProviderConfigMapper;
 import com.agenticrag.user.service.UserAiProviderConfigService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -31,7 +31,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 @Service
 public class UserAiProviderConfigServiceImpl
-        extends ServiceImpl<UserAiProviderConfigMapper, UserAiProviderConfigDao>
+        extends ServiceImpl<UserAiProviderConfigMapper, UserAiProviderConfigEntity>
         implements UserAiProviderConfigService {
 
     private static final Map<String, AiProviderCatalog> PROVIDERS = createProviders();
@@ -45,13 +45,13 @@ public class UserAiProviderConfigServiceImpl
     @Override
     public List<AiProviderOptionDTO> listProviderOptions(String userId) {
         Assert.hasText(userId, "用户ID不能为空");
-        Map<String, UserAiProviderConfigDao> userConfigs = list(new LambdaQueryWrapper<UserAiProviderConfigDao>()
-                .eq(UserAiProviderConfigDao::getUserId, userId))
+        Map<String, UserAiProviderConfigEntity> userConfigs = list(new LambdaQueryWrapper<UserAiProviderConfigEntity>()
+                .eq(UserAiProviderConfigEntity::getUserId, userId))
                 .stream()
-                .collect(java.util.stream.Collectors.toMap(UserAiProviderConfigDao::getProvider, item -> item, (a, b) -> a));
+                .collect(java.util.stream.Collectors.toMap(UserAiProviderConfigEntity::getProvider, item -> item, (a, b) -> a));
         return PROVIDERS.values().stream().map(provider -> {
             AiProviderOptionDTO dto = new AiProviderOptionDTO(provider.getProvider(), provider.getDisplayName());
-            UserAiProviderConfigDao config = userConfigs.get(provider.getProvider());
+            UserAiProviderConfigEntity config = userConfigs.get(provider.getProvider());
             dto.setConfigured(config != null && StringUtils.hasText(config.getApiKey()));
             dto.setVerified(config != null && config.getVerified() != null && config.getVerified() == 1);
             dto.setEnabled(config != null && config.getEnabled() != null && config.getEnabled() == 1);
@@ -62,11 +62,11 @@ public class UserAiProviderConfigServiceImpl
     @Override
     public List<AiConfiguredModelOptionDTO> listConfiguredModels(String userId) {
         Assert.hasText(userId, "用户ID不能为空");
-        return list(new LambdaQueryWrapper<UserAiProviderConfigDao>()
-                .eq(UserAiProviderConfigDao::getUserId, userId)
-                .eq(UserAiProviderConfigDao::getVerified, 1)
-                .orderByDesc(UserAiProviderConfigDao::getEnabled)
-                .orderByDesc(UserAiProviderConfigDao::getUpdateTime))
+        return list(new LambdaQueryWrapper<UserAiProviderConfigEntity>()
+                .eq(UserAiProviderConfigEntity::getUserId, userId)
+                .eq(UserAiProviderConfigEntity::getVerified, 1)
+                .orderByDesc(UserAiProviderConfigEntity::getEnabled)
+                .orderByDesc(UserAiProviderConfigEntity::getUpdateTime))
                 .stream()
                 .flatMap(config -> {
                     AiProviderCatalog catalog = requireProvider(config.getProvider());
@@ -92,16 +92,16 @@ public class UserAiProviderConfigServiceImpl
     @Override
     public AiSettingsDTO getCurrentSettings(String userId) {
         Assert.hasText(userId, "用户ID不能为空");
-        UserAiProviderConfigDao activeConfig = getActiveDao(userId);
+        UserAiProviderConfigEntity activeConfig = getActiveDao(userId);
         if (activeConfig != null) {
             return toSettingsDto(activeConfig, requireProvider(activeConfig.getProvider()));
         }
-        List<UserAiProviderConfigDao> configs = list(new LambdaQueryWrapper<UserAiProviderConfigDao>()
-                .eq(UserAiProviderConfigDao::getUserId, userId)
-                .orderByDesc(UserAiProviderConfigDao::getUpdateTime)
+        List<UserAiProviderConfigEntity> configs = list(new LambdaQueryWrapper<UserAiProviderConfigEntity>()
+                .eq(UserAiProviderConfigEntity::getUserId, userId)
+                .orderByDesc(UserAiProviderConfigEntity::getUpdateTime)
                 .last("limit 1"));
         if (!configs.isEmpty()) {
-            UserAiProviderConfigDao config = configs.get(0);
+            UserAiProviderConfigEntity config = configs.get(0);
             return toSettingsDto(config, requireProvider(config.getProvider()));
         }
         AiProviderCatalog defaultCatalog = PROVIDERS.values().iterator().next();
@@ -134,14 +134,14 @@ public class UserAiProviderConfigServiceImpl
         Assert.hasText(request.getProvider(), "provider不能为空");
 
         if (StringUtils.hasText(request.getApiKey())) {
-            UserAiProviderConfigDao existingConfig = findByUserIdAndProvider(userId, request.getProvider());
+            UserAiProviderConfigEntity existingConfig = findByUserIdAndProvider(userId, request.getProvider());
             String normalizedApiKey = request.getApiKey().trim();
             if (existingConfig == null || !normalizedApiKey.equals(existingConfig.getApiKey())) {
                 saveApiKey(userId, request.getProvider(), normalizedApiKey);
             }
         }
 
-        UserAiProviderConfigDao config = findByUserIdAndProvider(userId, request.getProvider());
+        UserAiProviderConfigEntity config = findByUserIdAndProvider(userId, request.getProvider());
         Assert.notNull(config, "请先配置API Key");
         Assert.isTrue(config.getVerified() != null && config.getVerified() == 1, "请先验证API Key");
 
@@ -151,12 +151,12 @@ public class UserAiProviderConfigServiceImpl
     @Override
     public void clearSettings(String userId) {
         Assert.hasText(userId, "用户ID不能为空");
-        List<UserAiProviderConfigDao> configs = list(new LambdaQueryWrapper<UserAiProviderConfigDao>()
-                .eq(UserAiProviderConfigDao::getUserId, userId));
+        List<UserAiProviderConfigEntity> configs = list(new LambdaQueryWrapper<UserAiProviderConfigEntity>()
+                .eq(UserAiProviderConfigEntity::getUserId, userId));
         if (configs.isEmpty()) {
             return;
         }
-        for (UserAiProviderConfigDao config : configs) {
+        for (UserAiProviderConfigEntity config : configs) {
             config.setEnabled(0);
             updateById(config);
         }
@@ -168,7 +168,7 @@ public class UserAiProviderConfigServiceImpl
         Assert.notNull(request, "请求不能为空");
         Assert.hasText(request.getProvider(), "provider不能为空");
 
-        UserAiProviderConfigDao config = findByUserIdAndProvider(userId, request.getProvider());
+        UserAiProviderConfigEntity config = findByUserIdAndProvider(userId, request.getProvider());
         Assert.notNull(config, "该Provider尚未配置");
         Assert.isTrue(config.getVerified() != null && config.getVerified() == 1, "该Provider尚未验证");
 
@@ -193,9 +193,9 @@ public class UserAiProviderConfigServiceImpl
         validateApiKey(apiKey);
 
         AiProviderCatalog catalog = requireProvider(provider);
-        UserAiProviderConfigDao config = findByUserIdAndProvider(userId, provider);
+        UserAiProviderConfigEntity config = findByUserIdAndProvider(userId, provider);
         if (config == null) {
-            config = new UserAiProviderConfigDao();
+            config = new UserAiProviderConfigEntity();
             config.setUserId(userId);
             config.setProvider(provider);
             config.setChatModel(catalog.getDefaultChatModel());
@@ -213,7 +213,7 @@ public class UserAiProviderConfigServiceImpl
     private VerifyResult verifyConfig(String userId, String provider) {
         Assert.hasText(userId, "用户ID不能为空");
         AiProviderCatalog catalog = requireProvider(provider);
-        UserAiProviderConfigDao config = findByUserIdAndProvider(userId, provider);
+        UserAiProviderConfigEntity config = findByUserIdAndProvider(userId, provider);
         Assert.notNull(config, "请先保存API Key");
         Assert.hasText(config.getApiKey(), "请先保存API Key");
 
@@ -268,7 +268,7 @@ public class UserAiProviderConfigServiceImpl
         Assert.hasText(provider, "provider不能为空");
 
         AiProviderCatalog catalog = requireProvider(provider);
-        UserAiProviderConfigDao config = findByUserIdAndProvider(userId, provider);
+        UserAiProviderConfigEntity config = findByUserIdAndProvider(userId, provider);
         Assert.notNull(config, "请先保存API Key");
         Assert.isTrue(config.getVerified() != null && config.getVerified() == 1, "请先验证API Key");
         validateSelectedModels(config, catalog, chatModel, embeddingModel);
@@ -293,32 +293,32 @@ public class UserAiProviderConfigServiceImpl
         if (!StringUtils.hasText(userId)) {
             return null;
         }
-        UserAiProviderConfigDao config = getActiveDao(userId);
+        UserAiProviderConfigEntity config = getActiveDao(userId);
         if (config == null) {
             return null;
         }
         return new AiRuntimeContext(buildRuntimeOptions(config, requireProvider(config.getProvider())));
     }
 
-    private UserAiProviderConfigDao getActiveDao(String userId) {
+    private UserAiProviderConfigEntity getActiveDao(String userId) {
         Assert.hasText(userId, "用户ID不能为空");
-        return getOne(new LambdaQueryWrapper<UserAiProviderConfigDao>()
-                .eq(UserAiProviderConfigDao::getUserId, userId)
-                .eq(UserAiProviderConfigDao::getEnabled, 1)
+        return getOne(new LambdaQueryWrapper<UserAiProviderConfigEntity>()
+                .eq(UserAiProviderConfigEntity::getUserId, userId)
+                .eq(UserAiProviderConfigEntity::getEnabled, 1)
                 .last("limit 1"));
     }
 
     private void disableOtherConfigs(String userId, String currentId) {
-        LambdaUpdateWrapper<UserAiProviderConfigDao> wrapper = new LambdaUpdateWrapper<UserAiProviderConfigDao>()
-                .eq(UserAiProviderConfigDao::getUserId, userId)
-                .set(UserAiProviderConfigDao::getEnabled, 0);
+        LambdaUpdateWrapper<UserAiProviderConfigEntity> wrapper = new LambdaUpdateWrapper<UserAiProviderConfigEntity>()
+                .eq(UserAiProviderConfigEntity::getUserId, userId)
+                .set(UserAiProviderConfigEntity::getEnabled, 0);
         if (StringUtils.hasText(currentId)) {
-            wrapper.ne(UserAiProviderConfigDao::getId, currentId);
+            wrapper.ne(UserAiProviderConfigEntity::getId, currentId);
         }
         update(wrapper);
     }
 
-    private AiSettingsDTO toSettingsDto(UserAiProviderConfigDao dao, AiProviderCatalog catalog) {
+    private AiSettingsDTO toSettingsDto(UserAiProviderConfigEntity dao, AiProviderCatalog catalog) {
         AiSettingsDTO dto = new AiSettingsDTO();
         dto.setProvider(catalog.getProvider());
         dto.setProviderName(catalog.getDisplayName());
@@ -404,10 +404,10 @@ public class UserAiProviderConfigServiceImpl
         return apiKey.substring(0, 4) + "********" + apiKey.substring(apiKey.length() - 4);
     }
 
-    private UserAiProviderConfigDao findByUserIdAndProvider(String userId, String provider) {
-        return getOne(new LambdaQueryWrapper<UserAiProviderConfigDao>()
-                .eq(UserAiProviderConfigDao::getUserId, userId)
-                .eq(UserAiProviderConfigDao::getProvider, provider)
+    private UserAiProviderConfigEntity findByUserIdAndProvider(String userId, String provider) {
+        return getOne(new LambdaQueryWrapper<UserAiProviderConfigEntity>()
+                .eq(UserAiProviderConfigEntity::getUserId, userId)
+                .eq(UserAiProviderConfigEntity::getProvider, provider)
                 .last("limit 1"));
     }
 
@@ -417,7 +417,7 @@ public class UserAiProviderConfigServiceImpl
         return catalog;
     }
 
-    private OpenAiRuntimeOptions buildRuntimeOptions(UserAiProviderConfigDao config, AiProviderCatalog catalog) {
+    private OpenAiRuntimeOptions buildRuntimeOptions(UserAiProviderConfigEntity config, AiProviderCatalog catalog) {
         OpenAiRuntimeOptions options = new OpenAiRuntimeOptions();
         options.setProvider(catalog.getProvider());
         options.setBaseUrl(catalog.getBaseUrl());
@@ -430,7 +430,7 @@ public class UserAiProviderConfigServiceImpl
         return options;
     }
 
-    private void validateSelectedModels(UserAiProviderConfigDao config,
+    private void validateSelectedModels(UserAiProviderConfigEntity config,
                                         AiProviderCatalog catalog,
                                         String chatModel,
                                         String embeddingModel) {
@@ -445,7 +445,7 @@ public class UserAiProviderConfigServiceImpl
         }
     }
 
-    private DiscoveredModels resolveAllowedModels(UserAiProviderConfigDao config, AiProviderCatalog catalog) {
+    private DiscoveredModels resolveAllowedModels(UserAiProviderConfigEntity config, AiProviderCatalog catalog) {
         try {
             OpenAiRuntimeOptions runtimeOptions = buildRuntimeOptions(config, catalog);
             List<OpenAiCompatibleModelFactory.AvailableModel> availableModels = modelFactory.listModels(runtimeOptions);

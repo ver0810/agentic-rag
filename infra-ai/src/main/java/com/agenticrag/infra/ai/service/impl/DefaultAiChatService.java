@@ -3,7 +3,6 @@ package com.agenticrag.infra.ai.service.impl;
 import com.agenticrag.infra.ai.config.AiChatProperties;
 import com.agenticrag.infra.ai.model.AiChatScene;
 import com.agenticrag.infra.ai.model.AiRuntimeContext;
-import com.agenticrag.infra.ai.rag.query.RagQueryService;
 import com.agenticrag.infra.ai.service.AiChatService;
 import com.agenticrag.infra.ai.service.AiProviderRouter;
 import com.github.benmanes.caffeine.cache.Cache;
@@ -19,7 +18,6 @@ import reactor.core.publisher.Flux;
 
 import java.util.concurrent.TimeUnit;
 
-
 @Service
 public class DefaultAiChatService implements AiChatService {
 
@@ -27,7 +25,6 @@ public class DefaultAiChatService implements AiChatService {
     private final AiChatProperties properties;
     private final AiProviderRouter providerRouter;
     private final ChatMemory chatMemory;
-    private final RagQueryService ragQueryService;
     private final Cache<String, ChatClient> chatClients = Caffeine.newBuilder()
             .expireAfterWrite(10, TimeUnit.MINUTES)
             .maximumSize(3)
@@ -36,22 +33,17 @@ public class DefaultAiChatService implements AiChatService {
     public DefaultAiChatService(ChatModel chatModel,
                                 AiChatProperties properties,
                                 AiProviderRouter providerRouter,
-                                ChatMemory chatMemory,
-                                RagQueryService ragQueryService) {
+                                ChatMemory chatMemory) {
         this.chatModel = chatModel;
         this.properties = properties;
         this.providerRouter = providerRouter;
         this.chatMemory = chatMemory;
-        this.ragQueryService = ragQueryService;
     }
 
     @Override
-    public String call(AiChatScene scene, String message, AiRuntimeContext context, String conversationId, String userId, String kbId) {
-        if (isRagRequest(scene, kbId)) {
-            return applyPostEnhancements(ragQueryService.query(message, kbId, userId, context, 5), context);
-        }
+    public String call(AiChatScene scene, String message, AiRuntimeContext context, String conversationId, String userId) {
         String enhancedMessage = applyPreEnhancements(message, context);
-        ChatClient chatClient = chatClients.get(conversationId, id -> buildChatClient(scene, context, id, kbId));
+        ChatClient chatClient = chatClients.get(conversationId, id -> buildChatClient(scene, context, id));
         String result = chatClient.prompt()
                 .user(enhancedMessage)
                 .call()
@@ -61,16 +53,8 @@ public class DefaultAiChatService implements AiChatService {
 
     @Override
     public Flux<String> stream(AiChatScene scene, String message, AiRuntimeContext context, String conversationId, String userId) {
-        return stream(scene, message, context, conversationId, userId, null);
-    }
-
-    @Override
-    public Flux<String> stream(AiChatScene scene, String message, AiRuntimeContext context, String conversationId, String userId, String kbId) {
-        if (isRagRequest(scene, kbId)) {
-            return Flux.just(applyPostEnhancements(ragQueryService.query(message, kbId, userId, context, 5), context));
-        }
         String enhancedMessage = applyPreEnhancements(message, context);
-        ChatClient chatClient = chatClients.get(conversationId, id -> buildChatClient(scene, context, id, kbId));
+        ChatClient chatClient = chatClients.get(conversationId, id -> buildChatClient(scene, context, id));
         return chatClient.prompt()
                 .user(enhancedMessage)
                 .stream()
@@ -85,15 +69,10 @@ public class DefaultAiChatService implements AiChatService {
     }
 
     private String applyPostEnhancements(String result, AiRuntimeContext context) {
-        // TODO: Implement post-processing like Guardian AI audit if enabled
         return result;
     }
 
     private ChatClient buildChatClient(AiChatScene scene, AiRuntimeContext context, String conversationId) {
-        return buildChatClient(scene, context, conversationId, null);
-    }
-
-    private ChatClient buildChatClient(AiChatScene scene, AiRuntimeContext context, String conversationId, String kbId) {
         ChatModel selectedModel = selectChatModel(context, scene);
         AiChatProperties.SceneOptions sceneOptions = properties.getScenes().get(resolveSceneCode(scene));
 
@@ -106,8 +85,6 @@ public class DefaultAiChatService implements AiChatService {
                 )
                 .defaultOptions(buildOptions(sceneOptions, context));
 
-        // TODO: If scene is RAG_QA and kbId is present, add QuestionAnswerAdvisor
-        
         if (sceneOptions != null && hasText(sceneOptions.getSystemPrompt())) {
             builder.defaultSystem(sceneOptions.getSystemPrompt());
         }
@@ -161,9 +138,5 @@ public class DefaultAiChatService implements AiChatService {
 
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
-    }
-
-    private boolean isRagRequest(AiChatScene scene, String kbId) {
-        return scene == AiChatScene.RAG_QA && hasText(kbId);
     }
 }

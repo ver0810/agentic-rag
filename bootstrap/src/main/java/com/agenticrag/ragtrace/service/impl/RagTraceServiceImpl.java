@@ -1,9 +1,9 @@
 package com.agenticrag.ragtrace.service.impl;
 
 import com.agenticrag.common.ApiException;
-import com.agenticrag.utils.SessionIdGenerator;
-import com.agenticrag.ragtrace.dao.entity.RagTraceNodeDao;
-import com.agenticrag.ragtrace.dao.entity.RagTraceRunDao;
+import com.agenticrag.common.SessionIdGenerator;
+import com.agenticrag.ragtrace.dao.entity.RagTraceNodeEntity;
+import com.agenticrag.ragtrace.dao.entity.RagTraceRunEntity;
 import com.agenticrag.ragtrace.dao.mapper.RagTraceNodeMapper;
 import com.agenticrag.ragtrace.dao.mapper.RagTraceRunMapper;
 import com.agenticrag.ragtrace.dto.RagTraceNodeDTO;
@@ -39,7 +39,7 @@ public class RagTraceServiceImpl implements RagTraceService {
     @Override
     public String startRun(String traceName, String entryMethod, String conversationId, String userId, Map<String, Object> extraData) {
         String traceId = SessionIdGenerator.generate();
-        RagTraceRunDao run = new RagTraceRunDao();
+        RagTraceRunEntity run = new RagTraceRunEntity();
         run.setTraceId(traceId);
         run.setTraceName(traceName);
         run.setEntryMethod(entryMethod);
@@ -57,7 +57,7 @@ public class RagTraceServiceImpl implements RagTraceService {
 
     @Override
     public void completeRun(String traceId, Map<String, Object> extraData) {
-        RagTraceRunDao run = requireRun(traceId);
+        RagTraceRunEntity run = requireRun(traceId);
         run.setStatus("SUCCESS");
         run.setEndTime(LocalDateTime.now());
         run.setDurationMs(durationMs(run.getStartTime(), run.getEndTime()));
@@ -68,7 +68,7 @@ public class RagTraceServiceImpl implements RagTraceService {
 
     @Override
     public void failRun(String traceId, String errorMessage, Map<String, Object> extraData) {
-        RagTraceRunDao run = requireRun(traceId);
+        RagTraceRunEntity run = requireRun(traceId);
         run.setStatus("ERROR");
         run.setErrorMessage(abbreviate(errorMessage));
         run.setEndTime(LocalDateTime.now());
@@ -80,7 +80,7 @@ public class RagTraceServiceImpl implements RagTraceService {
 
     @Override
     public String startNode(String traceId, String nodeType, String nodeName, Map<String, Object> extraData) {
-        RagTraceNodeDao node = new RagTraceNodeDao();
+        RagTraceNodeEntity node = new RagTraceNodeEntity();
         String nodeId = SessionIdGenerator.generate();
         node.setTraceId(abbreviate(traceId, 20));
         node.setNodeId(nodeId);
@@ -99,7 +99,7 @@ public class RagTraceServiceImpl implements RagTraceService {
 
     @Override
     public void completeNode(String traceId, String nodeId, Map<String, Object> extraData) {
-        RagTraceNodeDao node = requireNode(traceId, nodeId);
+        RagTraceNodeEntity node = requireNode(traceId, nodeId);
         node.setStatus("SUCCESS");
         node.setEndTime(LocalDateTime.now());
         node.setDurationMs(durationMs(node.getStartTime(), node.getEndTime()));
@@ -110,7 +110,7 @@ public class RagTraceServiceImpl implements RagTraceService {
 
     @Override
     public void failNode(String traceId, String nodeId, String errorMessage, Map<String, Object> extraData) {
-        RagTraceNodeDao node = requireNode(traceId, nodeId);
+        RagTraceNodeEntity node = requireNode(traceId, nodeId);
         node.setStatus("ERROR");
         node.setErrorMessage(abbreviate(errorMessage));
         node.setEndTime(LocalDateTime.now());
@@ -122,10 +122,10 @@ public class RagTraceServiceImpl implements RagTraceService {
 
     @Override
     public List<RagTraceRunDTO> listRuns(String userId, int limit) {
-        return ragTraceRunMapper.selectList(new LambdaQueryWrapper<RagTraceRunDao>()
-                        .eq(RagTraceRunDao::getUserId, userId)
-                        .eq(RagTraceRunDao::getDeleted, 0)
-                        .orderByDesc(RagTraceRunDao::getCreateTime)
+        return ragTraceRunMapper.selectList(new LambdaQueryWrapper<RagTraceRunEntity>()
+                        .eq(RagTraceRunEntity::getUserId, userId)
+                        .eq(RagTraceRunEntity::getDeleted, 0)
+                        .orderByDesc(RagTraceRunEntity::getCreateTime)
                         .last("limit " + Math.max(1, Math.min(limit, 100))))
                 .stream()
                 .map(run -> new RagTraceRunDTO(
@@ -146,18 +146,18 @@ public class RagTraceServiceImpl implements RagTraceService {
 
     @Override
     public RagTraceRunDTO getRun(String userId, String traceId) {
-        RagTraceRunDao run = ragTraceRunMapper.selectOne(new LambdaQueryWrapper<RagTraceRunDao>()
-                .eq(RagTraceRunDao::getTraceId, traceId)
-                .eq(RagTraceRunDao::getUserId, userId)
-                .eq(RagTraceRunDao::getDeleted, 0)
+        RagTraceRunEntity run = ragTraceRunMapper.selectOne(new LambdaQueryWrapper<RagTraceRunEntity>()
+                .eq(RagTraceRunEntity::getTraceId, traceId)
+                .eq(RagTraceRunEntity::getUserId, userId)
+                .eq(RagTraceRunEntity::getDeleted, 0)
                 .last("limit 1"));
         if (run == null) {
             throw ApiException.notFound("rag_trace_not_found", "RAG trace 不存在或无权访问");
         }
-        List<RagTraceNodeDTO> nodes = ragTraceNodeMapper.selectList(new LambdaQueryWrapper<RagTraceNodeDao>()
-                        .eq(RagTraceNodeDao::getTraceId, traceId)
-                        .eq(RagTraceNodeDao::getDeleted, 0)
-                        .orderByAsc(RagTraceNodeDao::getCreateTime))
+        List<RagTraceNodeDTO> nodes = ragTraceNodeMapper.selectList(new LambdaQueryWrapper<RagTraceNodeEntity>()
+                        .eq(RagTraceNodeEntity::getTraceId, traceId)
+                        .eq(RagTraceNodeEntity::getDeleted, 0)
+                        .orderByAsc(RagTraceNodeEntity::getCreateTime))
                 .stream()
                 .map(node -> new RagTraceNodeDTO(
                         node.getNodeId(),
@@ -185,10 +185,10 @@ public class RagTraceServiceImpl implements RagTraceService {
                 nodes);
     }
 
-    private RagTraceRunDao requireRun(String traceId) {
-        RagTraceRunDao run = ragTraceRunMapper.selectOne(new LambdaQueryWrapper<RagTraceRunDao>()
-                .eq(RagTraceRunDao::getTraceId, traceId)
-                .eq(RagTraceRunDao::getDeleted, 0)
+    private RagTraceRunEntity requireRun(String traceId) {
+        RagTraceRunEntity run = ragTraceRunMapper.selectOne(new LambdaQueryWrapper<RagTraceRunEntity>()
+                .eq(RagTraceRunEntity::getTraceId, traceId)
+                .eq(RagTraceRunEntity::getDeleted, 0)
                 .last("limit 1"));
         if (run == null) {
             throw ApiException.notFound("rag_trace_not_found", "RAG trace 不存在");
@@ -196,11 +196,11 @@ public class RagTraceServiceImpl implements RagTraceService {
         return run;
     }
 
-    private RagTraceNodeDao requireNode(String traceId, String nodeId) {
-        RagTraceNodeDao node = ragTraceNodeMapper.selectOne(new LambdaQueryWrapper<RagTraceNodeDao>()
-                .eq(RagTraceNodeDao::getTraceId, traceId)
-                .eq(RagTraceNodeDao::getNodeId, nodeId)
-                .eq(RagTraceNodeDao::getDeleted, 0)
+    private RagTraceNodeEntity requireNode(String traceId, String nodeId) {
+        RagTraceNodeEntity node = ragTraceNodeMapper.selectOne(new LambdaQueryWrapper<RagTraceNodeEntity>()
+                .eq(RagTraceNodeEntity::getTraceId, traceId)
+                .eq(RagTraceNodeEntity::getNodeId, nodeId)
+                .eq(RagTraceNodeEntity::getDeleted, 0)
                 .last("limit 1"));
         if (node == null) {
             throw ApiException.notFound("rag_trace_node_not_found", "RAG trace node 不存在");

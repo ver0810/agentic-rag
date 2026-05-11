@@ -36,8 +36,7 @@ public class RagQueryRewriteService {
                     String.format(REWRITE_PROMPT, query),
                     context,
                     "rag:rewrite:" + Integer.toHexString(query.hashCode()),
-                    userId,
-                    null);
+                    userId);
             if (!StringUtils.hasText(rewritten)) {
                 return query;
             }

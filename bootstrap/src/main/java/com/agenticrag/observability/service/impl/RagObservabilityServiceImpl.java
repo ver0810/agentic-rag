@@ -1,10 +1,10 @@
 package com.agenticrag.observability.service.impl;
 
-import com.agenticrag.ingestion.dao.entity.IngestionTaskDao;
-import com.agenticrag.ingestion.dao.mapper.IngestionTaskMapper;
+import com.agenticrag.knowledge.dao.entity.IngestionTaskEntity;
+import com.agenticrag.knowledge.dao.mapper.IngestionTaskMapper;
 import com.agenticrag.infra.ai.config.AiObservabilityProperties;
 import com.agenticrag.infra.ai.observability.TokenCostEstimator;
-import com.agenticrag.knowledge.dao.entity.KnowledgeChunkDao;
+import com.agenticrag.knowledge.dao.entity.KnowledgeChunkEntity;
 import com.agenticrag.knowledge.dao.mapper.KnowledgeChunkMapper;
 import com.agenticrag.observability.dto.RagAlertDispatchResultDTO;
 import com.agenticrag.observability.dto.RagObservabilityAlertDTO;
@@ -12,8 +12,8 @@ import com.agenticrag.observability.dto.RagObservabilityMetricsDTO;
 import com.agenticrag.observability.dto.RagObservabilitySummaryDTO;
 import com.agenticrag.observability.service.RagAlertNotifier;
 import com.agenticrag.observability.service.RagObservabilityService;
-import com.agenticrag.ragtrace.dao.entity.RagTraceNodeDao;
-import com.agenticrag.ragtrace.dao.entity.RagTraceRunDao;
+import com.agenticrag.ragtrace.dao.entity.RagTraceNodeEntity;
+import com.agenticrag.ragtrace.dao.entity.RagTraceRunEntity;
 import com.agenticrag.ragtrace.dao.mapper.RagTraceNodeMapper;
 import com.agenticrag.ragtrace.dao.mapper.RagTraceRunMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -109,22 +109,22 @@ public class RagObservabilityServiceImpl implements RagObservabilityService {
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime start = now.minusHours(normalizeHours(hours));
         List<String> users = new ArrayList<>();
-        ragTraceRunMapper.selectList(new LambdaQueryWrapper<RagTraceRunDao>()
-                        .select(RagTraceRunDao::getUserId)
-                        .eq(RagTraceRunDao::getTraceName, "rag_query")
-                        .eq(RagTraceRunDao::getDeleted, 0)
-                        .ge(RagTraceRunDao::getCreateTime, start))
+        ragTraceRunMapper.selectList(new LambdaQueryWrapper<RagTraceRunEntity>()
+                        .select(RagTraceRunEntity::getUserId)
+                        .eq(RagTraceRunEntity::getTraceName, "rag_query")
+                        .eq(RagTraceRunEntity::getDeleted, 0)
+                        .ge(RagTraceRunEntity::getCreateTime, start))
                 .stream()
-                .map(RagTraceRunDao::getUserId)
+                .map(RagTraceRunEntity::getUserId)
                 .filter(Objects::nonNull)
                 .forEach(users::add);
-        ingestionTaskMapper.selectList(new LambdaQueryWrapper<IngestionTaskDao>()
-                        .select(IngestionTaskDao::getCreatedBy)
-                        .eq(IngestionTaskDao::getSourceType, "knowledge_document")
-                        .eq(IngestionTaskDao::getDeleted, 0)
-                        .ge(IngestionTaskDao::getCreateTime, start))
+        ingestionTaskMapper.selectList(new LambdaQueryWrapper<IngestionTaskEntity>()
+                        .select(IngestionTaskEntity::getCreatedBy)
+                        .eq(IngestionTaskEntity::getSourceType, "knowledge_document")
+                        .eq(IngestionTaskEntity::getDeleted, 0)
+                        .ge(IngestionTaskEntity::getCreateTime, start))
                 .stream()
-                .map(IngestionTaskDao::getCreatedBy)
+                .map(IngestionTaskEntity::getCreatedBy)
                 .filter(Objects::nonNull)
                 .forEach(users::add);
 
@@ -141,9 +141,9 @@ public class RagObservabilityServiceImpl implements RagObservabilityService {
     }
 
     private WindowData loadWindowData(String userId, Window window) {
-        List<RagTraceRunDao> runs = loadTraceRuns(userId, window);
-        Map<String, List<RagTraceNodeDao>> nodesByTraceId = loadTraceNodes(runs);
-        List<IngestionTaskDao> tasks = loadIngestionTasks(userId, window);
+        List<RagTraceRunEntity> runs = loadTraceRuns(userId, window);
+        Map<String, List<RagTraceNodeEntity>> nodesByTraceId = loadTraceNodes(runs);
+        List<IngestionTaskEntity> tasks = loadIngestionTasks(userId, window);
 
         long totalQueries = runs.size();
         long successfulQueries = runs.stream().filter(run -> Objects.equals(run.getStatus(), "SUCCESS")).count();
@@ -160,7 +160,7 @@ public class RagObservabilityServiceImpl implements RagObservabilityService {
         double estimatedQueryEmbeddingCost = 0d;
         long generateErrorCount = 0L;
 
-        for (RagTraceRunDao run : runs) {
+        for (RagTraceRunEntity run : runs) {
             Map<String, Object> extraData = parseJson(run.getExtraData());
             String answerState = stringValue(extraData, "answerState");
             if ("empty_retrieval".equals(answerState)) {
@@ -180,7 +180,7 @@ public class RagObservabilityServiceImpl implements RagObservabilityService {
             estimatedChatCost += doubleValue(extraData, "estimatedChatOutputCost");
             estimatedQueryEmbeddingCost += doubleValue(extraData, "estimatedEmbeddingCost");
 
-            List<RagTraceNodeDao> nodes = nodesByTraceId.getOrDefault(run.getTraceId(), List.of());
+            List<RagTraceNodeEntity> nodes = nodesByTraceId.getOrDefault(run.getTraceId(), List.of());
             boolean hasGenerateError = nodes.stream()
                     .anyMatch(node -> Objects.equals(node.getNodeType(), "generate") && Objects.equals(node.getStatus(), "ERROR"));
             if (hasGenerateError) {
@@ -202,7 +202,7 @@ public class RagObservabilityServiceImpl implements RagObservabilityService {
         long totalIngestionDurationMs = 0L;
         long ingestionDurationCount = 0L;
         Set<String> successfulDocIds = new LinkedHashSet<>();
-        for (IngestionTaskDao task : tasks) {
+        for (IngestionTaskEntity task : tasks) {
             if (task.getStartedAt() != null && task.getCompletedAt() != null) {
                 totalIngestionDurationMs += Duration.between(task.getStartedAt(), task.getCompletedAt()).toMillis();
                 ingestionDurationCount++;
@@ -255,15 +255,15 @@ public class RagObservabilityServiceImpl implements RagObservabilityService {
     }
 
     private RagObservabilityAlertDTO buildConsecutiveFailureAlert(String userId) {
-        List<IngestionTaskDao> recentTasks = ingestionTaskMapper.selectList(
-                new LambdaQueryWrapper<IngestionTaskDao>()
-                        .eq(IngestionTaskDao::getCreatedBy, userId)
-                        .eq(IngestionTaskDao::getSourceType, "knowledge_document")
-                        .eq(IngestionTaskDao::getDeleted, 0)
-                        .orderByDesc(IngestionTaskDao::getCreateTime)
+        List<IngestionTaskEntity> recentTasks = ingestionTaskMapper.selectList(
+                new LambdaQueryWrapper<IngestionTaskEntity>()
+                        .eq(IngestionTaskEntity::getCreatedBy, userId)
+                        .eq(IngestionTaskEntity::getSourceType, "knowledge_document")
+                        .eq(IngestionTaskEntity::getDeleted, 0)
+                        .orderByDesc(IngestionTaskEntity::getCreateTime)
                         .last("limit 10"));
         int streak = 0;
-        for (IngestionTaskDao task : recentTasks) {
+        for (IngestionTaskEntity task : recentTasks) {
             if (Objects.equals(task.getStatus(), "FAILED")) {
                 streak++;
             } else {
@@ -356,43 +356,43 @@ public class RagObservabilityServiceImpl implements RagObservabilityService {
                 Map.of("errorRateIncrease", round4(increase), "increaseThreshold", increaseThreshold));
     }
 
-    private List<RagTraceRunDao> loadTraceRuns(String userId, Window window) {
+    private List<RagTraceRunEntity> loadTraceRuns(String userId, Window window) {
         return ragTraceRunMapper.selectList(
-                new LambdaQueryWrapper<RagTraceRunDao>()
-                        .eq(RagTraceRunDao::getUserId, userId)
-                        .eq(RagTraceRunDao::getTraceName, "rag_query")
-                        .eq(RagTraceRunDao::getDeleted, 0)
-                        .ge(RagTraceRunDao::getCreateTime, window.start())
-                        .lt(RagTraceRunDao::getCreateTime, window.end())
-                        .orderByDesc(RagTraceRunDao::getCreateTime));
+                new LambdaQueryWrapper<RagTraceRunEntity>()
+                        .eq(RagTraceRunEntity::getUserId, userId)
+                        .eq(RagTraceRunEntity::getTraceName, "rag_query")
+                        .eq(RagTraceRunEntity::getDeleted, 0)
+                        .ge(RagTraceRunEntity::getCreateTime, window.start())
+                        .lt(RagTraceRunEntity::getCreateTime, window.end())
+                        .orderByDesc(RagTraceRunEntity::getCreateTime));
     }
 
-    private Map<String, List<RagTraceNodeDao>> loadTraceNodes(List<RagTraceRunDao> runs) {
+    private Map<String, List<RagTraceNodeEntity>> loadTraceNodes(List<RagTraceRunEntity> runs) {
         if (runs.isEmpty()) {
             return Map.of();
         }
-        List<String> traceIds = runs.stream().map(RagTraceRunDao::getTraceId).toList();
-        List<RagTraceNodeDao> nodes = ragTraceNodeMapper.selectList(
-                new LambdaQueryWrapper<RagTraceNodeDao>()
-                        .in(RagTraceNodeDao::getTraceId, traceIds)
-                        .eq(RagTraceNodeDao::getDeleted, 0)
-                        .orderByAsc(RagTraceNodeDao::getCreateTime));
-        Map<String, List<RagTraceNodeDao>> grouped = new LinkedHashMap<>();
-        for (RagTraceNodeDao node : nodes) {
+        List<String> traceIds = runs.stream().map(RagTraceRunEntity::getTraceId).toList();
+        List<RagTraceNodeEntity> nodes = ragTraceNodeMapper.selectList(
+                new LambdaQueryWrapper<RagTraceNodeEntity>()
+                        .in(RagTraceNodeEntity::getTraceId, traceIds)
+                        .eq(RagTraceNodeEntity::getDeleted, 0)
+                        .orderByAsc(RagTraceNodeEntity::getCreateTime));
+        Map<String, List<RagTraceNodeEntity>> grouped = new LinkedHashMap<>();
+        for (RagTraceNodeEntity node : nodes) {
             grouped.computeIfAbsent(node.getTraceId(), ignored -> new ArrayList<>()).add(node);
         }
         return grouped;
     }
 
-    private List<IngestionTaskDao> loadIngestionTasks(String userId, Window window) {
+    private List<IngestionTaskEntity> loadIngestionTasks(String userId, Window window) {
         return ingestionTaskMapper.selectList(
-                new LambdaQueryWrapper<IngestionTaskDao>()
-                        .eq(IngestionTaskDao::getCreatedBy, userId)
-                        .eq(IngestionTaskDao::getSourceType, "knowledge_document")
-                        .eq(IngestionTaskDao::getDeleted, 0)
-                        .ge(IngestionTaskDao::getCreateTime, window.start())
-                        .lt(IngestionTaskDao::getCreateTime, window.end())
-                        .orderByDesc(IngestionTaskDao::getCreateTime));
+                new LambdaQueryWrapper<IngestionTaskEntity>()
+                        .eq(IngestionTaskEntity::getCreatedBy, userId)
+                        .eq(IngestionTaskEntity::getSourceType, "knowledge_document")
+                        .eq(IngestionTaskEntity::getDeleted, 0)
+                        .ge(IngestionTaskEntity::getCreateTime, window.start())
+                        .lt(IngestionTaskEntity::getCreateTime, window.end())
+                        .orderByDesc(IngestionTaskEntity::getCreateTime));
     }
 
     private long loadIngestionEmbeddingTokens(Collection<String> docIds) {
@@ -401,11 +401,11 @@ public class RagObservabilityServiceImpl implements RagObservabilityService {
         }
         long total = 0L;
         for (List<String> batch : batches(new ArrayList<>(docIds), 200)) {
-            List<KnowledgeChunkDao> chunks = knowledgeChunkMapper.selectList(
-                    new LambdaQueryWrapper<KnowledgeChunkDao>()
-                            .in(KnowledgeChunkDao::getDocId, batch)
-                            .eq(KnowledgeChunkDao::getDeleted, 0));
-            for (KnowledgeChunkDao chunk : chunks) {
+            List<KnowledgeChunkEntity> chunks = knowledgeChunkMapper.selectList(
+                    new LambdaQueryWrapper<KnowledgeChunkEntity>()
+                            .in(KnowledgeChunkEntity::getDocId, batch)
+                            .eq(KnowledgeChunkEntity::getDeleted, 0));
+            for (KnowledgeChunkEntity chunk : chunks) {
                 if (chunk.getTokenCount() != null && chunk.getTokenCount() > 0) {
                     total += chunk.getTokenCount();
                 } else if (chunk.getCharCount() != null && chunk.getCharCount() > 0) {
@@ -496,9 +496,9 @@ public class RagObservabilityServiceImpl implements RagObservabilityService {
 
     private record WindowData(
             Window window,
-            List<RagTraceRunDao> runs,
-            Map<String, List<RagTraceNodeDao>> nodesByTraceId,
-            List<IngestionTaskDao> tasks,
+            List<RagTraceRunEntity> runs,
+            Map<String, List<RagTraceNodeEntity>> nodesByTraceId,
+            List<IngestionTaskEntity> tasks,
             RagObservabilityMetricsDTO metrics
     ) {
     }

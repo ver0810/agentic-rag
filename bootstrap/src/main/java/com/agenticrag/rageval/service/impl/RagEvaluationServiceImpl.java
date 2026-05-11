@@ -1,11 +1,12 @@
 package com.agenticrag.rageval.service.impl;
 
 import com.agenticrag.common.ApiException;
+import com.agenticrag.infra.ai.api.rag.RagFacade;
+import com.agenticrag.infra.ai.api.rag.RagQueryRequest;
 import com.agenticrag.infra.ai.rag.query.RagQueryResult;
-import com.agenticrag.infra.ai.rag.query.RagQueryService;
 import com.agenticrag.knowledge.service.KnowledgeBaseService;
-import com.agenticrag.rageval.dao.entity.RagEvalCaseResultDao;
-import com.agenticrag.rageval.dao.entity.RagEvalRunDao;
+import com.agenticrag.rageval.dao.entity.RagEvalCaseResultEntity;
+import com.agenticrag.rageval.dao.entity.RagEvalRunEntity;
 import com.agenticrag.rageval.dao.mapper.RagEvalCaseResultMapper;
 import com.agenticrag.rageval.dao.mapper.RagEvalRunMapper;
 import com.agenticrag.rageval.dto.RagEvalCaseDTO;
@@ -51,19 +52,19 @@ public class RagEvaluationServiceImpl implements RagEvaluationService {
     );
 
     private final ObjectMapper objectMapper;
-    private final RagQueryService ragQueryService;
+    private final RagFacade ragFacade;
     private final KnowledgeBaseService knowledgeBaseService;
     private final RagEvalRunMapper ragEvalRunMapper;
     private final RagEvalCaseResultMapper ragEvalCaseResultMapper;
     private final PathMatchingResourcePatternResolver resourceResolver = new PathMatchingResourcePatternResolver();
 
     public RagEvaluationServiceImpl(ObjectMapper objectMapper,
-                                    RagQueryService ragQueryService,
+                                    RagFacade ragFacade,
                                     KnowledgeBaseService knowledgeBaseService,
                                     RagEvalRunMapper ragEvalRunMapper,
                                     RagEvalCaseResultMapper ragEvalCaseResultMapper) {
         this.objectMapper = objectMapper;
-        this.ragQueryService = ragQueryService;
+        this.ragFacade = ragFacade;
         this.knowledgeBaseService = knowledgeBaseService;
         this.ragEvalRunMapper = ragEvalRunMapper;
         this.ragEvalCaseResultMapper = ragEvalCaseResultMapper;
@@ -141,13 +142,13 @@ public class RagEvaluationServiceImpl implements RagEvaluationService {
 
     @Override
     public List<RagEvalRunSummaryDTO> listRuns(String userId, String datasetName, Integer limit) {
-        LambdaQueryWrapper<RagEvalRunDao> query = new LambdaQueryWrapper<RagEvalRunDao>()
-                .eq(RagEvalRunDao::getUserId, userId)
-                .eq(RagEvalRunDao::getDeleted, 0)
-                .orderByDesc(RagEvalRunDao::getExecutedAt)
+        LambdaQueryWrapper<RagEvalRunEntity> query = new LambdaQueryWrapper<RagEvalRunEntity>()
+                .eq(RagEvalRunEntity::getUserId, userId)
+                .eq(RagEvalRunEntity::getDeleted, 0)
+                .orderByDesc(RagEvalRunEntity::getExecutedAt)
                 .last("limit " + Math.max(1, Math.min(limit == null ? 20 : limit, 100)));
         if (StringUtils.hasText(datasetName)) {
-            query.eq(RagEvalRunDao::getDatasetName, datasetName);
+            query.eq(RagEvalRunEntity::getDatasetName, datasetName);
         }
         return ragEvalRunMapper.selectList(query).stream()
                 .map(this::toRunSummary)
@@ -156,11 +157,11 @@ public class RagEvaluationServiceImpl implements RagEvaluationService {
 
     @Override
     public RagEvalReportDTO getRun(String userId, String runId) {
-        RagEvalRunDao run = requireRun(userId, runId);
-        List<RagEvalCaseResultDTO> cases = ragEvalCaseResultMapper.selectList(new LambdaQueryWrapper<RagEvalCaseResultDao>()
-                        .eq(RagEvalCaseResultDao::getEvalRunId, runId)
-                        .eq(RagEvalCaseResultDao::getDeleted, 0)
-                        .orderByAsc(RagEvalCaseResultDao::getCaseId))
+        RagEvalRunEntity run = requireRun(userId, runId);
+        List<RagEvalCaseResultDTO> cases = ragEvalCaseResultMapper.selectList(new LambdaQueryWrapper<RagEvalCaseResultEntity>()
+                        .eq(RagEvalCaseResultEntity::getEvalRunId, runId)
+                        .eq(RagEvalCaseResultEntity::getDeleted, 0)
+                        .orderByAsc(RagEvalCaseResultEntity::getCaseId))
                 .stream()
                 .map(this::toCaseResult)
                 .toList();
@@ -240,7 +241,12 @@ public class RagEvaluationServiceImpl implements RagEvaluationService {
         String kbId = resolveKbId(evalCase, kbIdOverride);
         knowledgeBaseService.getById(kbId, userId);
         int topK = topKOverride != null ? topKOverride : (evalCase.topK() != null ? evalCase.topK() : 5);
-        RagQueryResult result = ragQueryService.queryDetailed(evalCase.query(), kbId, userId, topK);
+        RagQueryResult result = ragFacade.query(new RagQueryRequest(
+                evalCase.query(),
+                kbId,
+                userId,
+                null,
+                topK));
 
         List<String> expectedAnswerTerms = safeList(evalCase.expectedAnswerContains());
         List<String> expectedDocNames = safeList(evalCase.expectedDocNames());
@@ -361,7 +367,7 @@ public class RagEvaluationServiceImpl implements RagEvaluationService {
     private RagEvalReportDTO persistReport(String userId, String kbId, Integer topKOverride, RagEvalReportDTO report) {
         String runId = UUID.randomUUID().toString().replace("-", "");
         LocalDateTime now = LocalDateTime.now();
-        RagEvalRunDao run = new RagEvalRunDao();
+        RagEvalRunEntity run = new RagEvalRunEntity();
         run.setRunId(runId);
         run.setDatasetName(report.dataset());
         run.setKbId(kbId);
@@ -381,7 +387,7 @@ public class RagEvaluationServiceImpl implements RagEvaluationService {
         ragEvalRunMapper.insert(run);
 
         for (RagEvalCaseResultDTO item : report.cases()) {
-            RagEvalCaseResultDao caseResult = new RagEvalCaseResultDao();
+            RagEvalCaseResultEntity caseResult = new RagEvalCaseResultEntity();
             caseResult.setEvalRunId(runId);
             caseResult.setCaseId(item.caseId());
             caseResult.setKbId(item.kbId());
@@ -414,11 +420,11 @@ public class RagEvaluationServiceImpl implements RagEvaluationService {
         );
     }
 
-    private RagEvalRunDao requireRun(String userId, String runId) {
-        RagEvalRunDao run = ragEvalRunMapper.selectOne(new LambdaQueryWrapper<RagEvalRunDao>()
-                .eq(RagEvalRunDao::getRunId, runId)
-                .eq(RagEvalRunDao::getUserId, userId)
-                .eq(RagEvalRunDao::getDeleted, 0)
+    private RagEvalRunEntity requireRun(String userId, String runId) {
+        RagEvalRunEntity run = ragEvalRunMapper.selectOne(new LambdaQueryWrapper<RagEvalRunEntity>()
+                .eq(RagEvalRunEntity::getRunId, runId)
+                .eq(RagEvalRunEntity::getUserId, userId)
+                .eq(RagEvalRunEntity::getDeleted, 0)
                 .last("limit 1"));
         if (run == null) {
             throw ApiException.notFound("rag_eval_run_not_found", "未找到评测运行记录: " + runId);
@@ -426,7 +432,7 @@ public class RagEvaluationServiceImpl implements RagEvaluationService {
         return run;
     }
 
-    private RagEvalRunSummaryDTO toRunSummary(RagEvalRunDao run) {
+    private RagEvalRunSummaryDTO toRunSummary(RagEvalRunEntity run) {
         return new RagEvalRunSummaryDTO(
                 run.getRunId(),
                 run.getDatasetName(),
@@ -437,7 +443,7 @@ public class RagEvaluationServiceImpl implements RagEvaluationService {
         );
     }
 
-    private RagEvalReportDTO.Summary toSummary(RagEvalRunDao run) {
+    private RagEvalReportDTO.Summary toSummary(RagEvalRunEntity run) {
         return new RagEvalReportDTO.Summary(
                 defaultInt(run.getTotalCount()),
                 defaultInt(run.getPassedCount()),
@@ -449,7 +455,7 @@ public class RagEvaluationServiceImpl implements RagEvaluationService {
         );
     }
 
-    private RagEvalCaseResultDTO toCaseResult(RagEvalCaseResultDao item) {
+    private RagEvalCaseResultDTO toCaseResult(RagEvalCaseResultEntity item) {
         return new RagEvalCaseResultDTO(
                 item.getCaseId(),
                 item.getKbId(),

@@ -1,7 +1,8 @@
 package com.agenticrag.controller;
 
+import com.agenticrag.infra.ai.api.embedding.AiEmbeddingFacade;
+import com.agenticrag.infra.ai.api.embedding.EmbeddingRequest;
 import com.agenticrag.infra.ai.model.AiRuntimeContext;
-import com.agenticrag.infra.ai.service.AiEmbeddingService;
 import com.agenticrag.user.auth.CurrentUser;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -13,12 +14,12 @@ import com.agenticrag.user.service.UserAiProviderConfigService;
 @RequestMapping("/embedding")
 public class EmbeddingController {
 
-    private final AiEmbeddingService aiEmbeddingService;
+    private final AiEmbeddingFacade aiEmbeddingFacade;
     private final UserAiProviderConfigService userAiProviderConfigService;
 
-    public EmbeddingController(AiEmbeddingService aiEmbeddingService,
+    public EmbeddingController(AiEmbeddingFacade aiEmbeddingFacade,
                                UserAiProviderConfigService userAiProviderConfigService) {
-        this.aiEmbeddingService = aiEmbeddingService;
+        this.aiEmbeddingFacade = aiEmbeddingFacade;
         this.userAiProviderConfigService = userAiProviderConfigService;
     }
 
@@ -26,6 +27,6 @@ public class EmbeddingController {
     public float[] embed(@RequestParam(name = "text") String text,
                          @CurrentUser String userId) {
         AiRuntimeContext context = userAiProviderConfigService.resolveRuntimeContext(userId);
-        return aiEmbeddingService.embed(text, context);
+        return aiEmbeddingFacade.embed(new EmbeddingRequest(text, context)).vector();
     }
 }
