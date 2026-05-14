@@ -38,3 +38,17 @@ build/
 .mvn/codex-settings.xml
 **/effective-pom
 artifacts/
+
+### Python ###
+doc-parser-service/.venv/
+doc-parser-service/__pycache__/
+doc-parser-service/**/__pycache__/
+doc-parser-service/*.pyc
+doc-parser-service/.env
+
+### Models (large files, download separately) ###
+doc-parser-service/models/deepdoc/*.onnx
+doc-parser-service/models/deepdoc/*.res
+
+### Uploads ###
+uploads/

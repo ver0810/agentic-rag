@@ -2,6 +2,11 @@ spring:
   application:
     name: agenticrag
 
+  servlet:
+    multipart:
+      max-file-size: ${MULTIPART_MAX_FILE_SIZE:50MB}
+      max-request-size: ${MULTIPART_MAX_REQUEST_SIZE:60MB}
+
   datasource:
     url: ${DB_URL}
     username: ${DB_USERNAME}
@@ -20,6 +25,17 @@ spring:
           stream-usage: false
 
 agenticrag:
+  parser:
+    python:
+      service-url: ${PYTHON_PARSER_SERVICE_URL:http://localhost:8000}
+      timeout: ${PYTHON_PARSER_TIMEOUT:300000}
+      fallback-enabled: ${PYTHON_PARSER_FALLBACK:true}
+      health-check-interval: ${PYTHON_PARSER_HEALTH_CHECK_INTERVAL:30000}
+    pdf:
+      python:
+        command: ${PDF_PYTHON_COMMAND:python}
+        script: ${PDF_PYTHON_SCRIPT:scripts/pdf_pipeline/main.py}
+        render-dpi: ${PDF_RENDER_DPI:216}
   auth:
     jwt:
       secret: ${JWT_SECRET:change-this-jwt-secret-to-a-long-random-value-1234567890}
