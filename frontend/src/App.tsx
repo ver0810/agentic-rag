@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'rea
 import axios from 'axios';
 import { BrowserRouter as Router, Route, Routes, useNavigate } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
-import { ChatAPI, type Message } from './api/chat';
+import { ChatAPI, type Message, type MessageMetadata } from './api/chat';
 import { KnowledgeAPI, type KnowledgeBase } from './api/knowledge';
 import ChatSidebar from './components/chat/ChatSidebar';
 import ChatHeader from './components/chat/ChatHeader';
@@ -50,12 +50,24 @@ function ChatInterface() {
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [activeKb, setActiveKb] = useState<KnowledgeBase | null>(null);
   const [selectedKbId, setSelectedKbId] = useState<string | null>(null);
+  const [focusedTraceId, setFocusedTraceId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
   const userStr = localStorage.getItem('user');
   const user = userStr ? JSON.parse(userStr) : null;
+
+  const parseMessageMetadata = (metadataJson?: string) => {
+    if (!metadataJson) {
+      return {};
+    }
+    try {
+      return JSON.parse(metadataJson) as MessageMetadata;
+    } catch {
+      return {};
+    }
+  };
 
   useEffect(() => {
     if (!user) {
@@ -126,10 +138,20 @@ function ChatInterface() {
     try {
       const response = await ChatAPI.getMessages(sessionId);
       setMessages(
-        response.data.map((msg) => ({
-          role: msg.role,
-          content: msg.content,
-        })) as Message[],
+        response.data.map((msg) => {
+          const metadata = parseMessageMetadata(msg.metadataJson);
+          return {
+            role: msg.role,
+            content: msg.content,
+            sourceType: metadata.sourceType,
+            scene: metadata.scene,
+            kbId: metadata.kbId,
+            traceId: metadata.traceId,
+            rewrittenQuery: metadata.rewrittenQuery,
+            citations: metadata.citations,
+            retrievedChunks: metadata.retrievedChunks,
+          };
+        }) as Message[],
       );
     } catch (err) {
       console.error('Failed to fetch messages', err);
@@ -260,7 +282,13 @@ function ChatInterface() {
     const nextInput = input;
     setMessages((prev) => [
       ...prev,
-      { role: 'user', content: nextInput },
+      {
+        role: 'user',
+        content: nextInput,
+        sourceType: selectedKbId ? 'rag' : 'chat',
+        scene: selectedKbId ? 'rag_qa' : undefined,
+        kbId: selectedKbId ?? undefined,
+      },
       { role: 'assistant', content: '' },
     ]);
     setInput('');
@@ -278,22 +306,41 @@ function ChatInterface() {
         await fetchSessions();
       }
 
-      await ChatAPI.streamChat(
-        nextInput,
-        sessionId,
-        selectedKbId ? 'rag_qa' : undefined,
-        selectedKbId || undefined,
-        (accumulatedContent) => {
-          setMessages((prev) => {
-            const next = [...prev];
-            next[next.length - 1] = {
-              ...next[next.length - 1],
-              content: accumulatedContent,
-            };
-            return next;
-          });
-        },
-      );
+      if (selectedKbId) {
+        const response = await ChatAPI.queryChat(nextInput, sessionId, 'rag_qa', selectedKbId);
+        setMessages((prev) => {
+          const next = [...prev];
+          next[next.length - 1] = {
+            ...next[next.length - 1],
+            content: response.data.answer,
+            sourceType: response.data.sourceType,
+            scene: response.data.scene,
+            kbId: response.data.kbId,
+            traceId: response.data.traceId,
+            rewrittenQuery: response.data.rewrittenQuery,
+            citations: response.data.citations,
+            retrievedChunks: response.data.retrievedChunks,
+          };
+          return next;
+        });
+      } else {
+        await ChatAPI.streamChat(
+          nextInput,
+          sessionId,
+          undefined,
+          undefined,
+          (accumulatedContent) => {
+            setMessages((prev) => {
+              const next = [...prev];
+              next[next.length - 1] = {
+                ...next[next.length - 1],
+                content: accumulatedContent,
+              };
+              return next;
+            });
+          },
+        );
+      }
 
       if (isNewSession) {
         await fetchSessions();
@@ -329,6 +376,8 @@ function ChatInterface() {
     setSidebarTab(tab);
     if (tab === 'observability') {
       setActiveKb(null);
+    } else {
+      setFocusedTraceId(null);
     }
   };
 
@@ -340,6 +389,13 @@ function ChatInterface() {
   const selectSceneKb = (kbId: string | null) => {
     setSelectedKbId(kbId);
     setShowSceneMenu(false);
+  };
+
+  const handleTraceClick = (traceId: string) => {
+    setFocusedTraceId(traceId);
+    setActiveKb(null);
+    setSidebarTab('observability');
+    setObsTab('trace');
   };
 
   return (
@@ -443,7 +499,7 @@ function ChatInterface() {
         <div className="flex-1 overflow-y-auto scrollbar-hide pt-4">
           <Suspense fallback={<ContentFallback />}>
             {sidebarTab === 'observability' ? (
-              obsTab === 'trace' ? <ObservabilityView /> : <EvalView />
+              obsTab === 'trace' ? <ObservabilityView focusTraceId={focusedTraceId} /> : <EvalView />
             ) : activeKb ? (
               <KnowledgeBaseView kb={activeKb} onDelete={() => void handleDeleteKb(activeKb.id)} />
             ) : (
@@ -452,6 +508,8 @@ function ChatInterface() {
                 messages={messages}
                 isLoading={isLoading}
                 messagesEndRef={messagesEndRef}
+                knowledgeBases={knowledgeBases}
+                onTraceClick={handleTraceClick}
                 onSuggestionClick={setInput}
               />
             )}

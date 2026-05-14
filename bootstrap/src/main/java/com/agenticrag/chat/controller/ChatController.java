@@ -1,5 +1,6 @@
 package com.agenticrag.chat.controller;
 
+import com.agenticrag.chat.dto.ChatResult;
 import com.agenticrag.chat.service.ChatService;
 import com.agenticrag.user.auth.CurrentUser;
 import com.agenticrag.user.dao.entity.ConversationEntity;
@@ -65,6 +66,17 @@ public class ChatController {
         return chatService.chat(message, scene, kbId, userId, conversationId);
     }
 
+    @PostMapping("/query")
+    public ResponseEntity<ChatResult> query(@RequestBody QueryRequest request,
+                                            @CurrentUser String userId) {
+        return ResponseEntity.ok(chatService.query(
+                request.message(),
+                request.scene(),
+                request.kbId(),
+                userId,
+                request.conversationId()));
+    }
+
     @PostMapping("/stream")
     public Flux<String> stream(@RequestParam(name = "message") String message,
                                @RequestParam(name = "scene", required = false) String scene,
@@ -73,4 +85,6 @@ public class ChatController {
                                @RequestParam(name = "conversationId") String conversationId) {
         return chatService.stream(message, scene, kbId, userId, conversationId);
     }
+
+    public record QueryRequest(String message, String conversationId, String scene, String kbId) {}
 }

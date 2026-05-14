@@ -56,6 +56,38 @@ export interface IngestionTask {
   nodes: IngestionTaskNode[];
 }
 
+export interface RagCitation {
+  chunkId: string;
+  docId: string;
+  docName: string;
+  chunkIndex?: number;
+  headingPath?: string;
+  segmentType?: string;
+  headingLevel?: number;
+  score: number;
+  snippet: string;
+}
+
+export interface RagRetrievedChunk {
+  chunkId: string;
+  docId: string;
+  docName: string;
+  chunkIndex?: number;
+  headingPath?: string;
+  segmentType?: string;
+  headingLevel?: number;
+  score: number;
+  content: string;
+}
+
+export interface RagQueryResult {
+  answer: string;
+  traceId: string;
+  rewrittenQuery: string;
+  citations: RagCitation[];
+  retrievedChunks: RagRetrievedChunk[];
+}
+
 export const KnowledgeAPI = {
   list: () => axios.get<KnowledgeBase[]>('/api/knowledge-base'),
 
@@ -90,5 +122,8 @@ export const KnowledgeAPI = {
     axios.get<IngestionTask>(`/api/ingestion/tasks/${taskId}`),
 
   retryTask: (taskId: string) =>
-    axios.post<{ message: string; taskId: string }>(`/api/ingestion/tasks/${taskId}/retry`)
+    axios.post<{ message: string; taskId: string }>(`/api/ingestion/tasks/${taskId}/retry`),
+
+  queryRag: (query: string, kbId: string, topK = 5) =>
+    axios.post<RagQueryResult>('/api/rag/query', { query, kbId, topK })
 };

@@ -14,6 +14,9 @@ public record RagQueryResult(
             String docId,
             String docName,
             Integer chunkIndex,
+            String headingPath,
+            String segmentType,
+            Integer headingLevel,
             float score,
             String snippet
     ) {}
@@ -23,6 +26,9 @@ public record RagQueryResult(
             String docId,
             String docName,
             Integer chunkIndex,
+            String headingPath,
+            String segmentType,
+            Integer headingLevel,
             float score,
             String content
     ) {}

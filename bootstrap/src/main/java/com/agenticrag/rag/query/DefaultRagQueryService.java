@@ -365,6 +365,9 @@ public class DefaultRagQueryService implements RagQueryService {
                 metadataValue(result, "docId"),
                 metadataValue(result, "docName"),
                 metadataIntegerValue(result, "chunkIndex"),
+                metadataValue(result, "headingPath"),
+                metadataValue(result, "segmentType"),
+                metadataIntegerValue(result, "headingLevel"),
                 result.score(),
                 abbreviate(result.content(), 200));
     }
@@ -375,6 +378,9 @@ public class DefaultRagQueryService implements RagQueryService {
                 metadataValue(result, "docId"),
                 metadataValue(result, "docName"),
                 metadataIntegerValue(result, "chunkIndex"),
+                metadataValue(result, "headingPath"),
+                metadataValue(result, "segmentType"),
+                metadataIntegerValue(result, "headingLevel"),
                 result.score(),
                 result.content());
     }
@@ -409,11 +415,25 @@ public class DefaultRagQueryService implements RagQueryService {
     private String toEvidenceBlock(VectorIndexPort.SearchResult result) {
         Integer chunkIndex = metadataIntegerValue(result, "chunkIndex");
         String docName = metadataValue(result, "docName");
+        String headingPath = metadataValue(result, "headingPath");
+        String segmentType = metadataValue(result, "segmentType");
         String label = chunkIndex == null ? result.chunkId() : String.valueOf(chunkIndex + 1);
         return "[" + label + "] "
                 + (docName == null ? "Unknown Document" : docName)
+                + evidenceSuffix(headingPath, segmentType)
                 + "\n"
                 + result.content();
+    }
+
+    private String evidenceSuffix(String headingPath, String segmentType) {
+        StringBuilder suffix = new StringBuilder();
+        if (StringUtils.hasText(segmentType)) {
+            suffix.append(" <").append(segmentType).append(">");
+        }
+        if (StringUtils.hasText(headingPath)) {
+            suffix.append(" ").append(headingPath);
+        }
+        return suffix.toString();
     }
 
     private List<SearchResultView> mergeResults(List<? extends VectorIndexPort.SearchResult> vectorResults,

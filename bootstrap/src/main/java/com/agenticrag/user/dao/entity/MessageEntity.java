@@ -16,6 +16,7 @@ public class MessageEntity {
     private String userId;
     private String role;
     private String content;
+    private String metadataJson;
     private String thinkingContent;
     private Integer thinkingDuration;
     private LocalDateTime createTime;

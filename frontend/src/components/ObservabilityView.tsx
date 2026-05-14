@@ -36,7 +36,9 @@ import type { RagAlertDispatchResult, RagObservabilityAlert, RagObservabilitySum
 import { TraceAPI } from '../api/trace';
 import type { RagTraceRun } from '../api/trace';
 
-interface ObservabilityViewProps {}
+interface ObservabilityViewProps {
+  focusTraceId?: string | null;
+}
 
 const formatCost = (value?: number) => `$${(value ?? 0).toFixed(4)}`;
 
@@ -49,7 +51,7 @@ const safeParse = (data?: string) => {
   }
 };
 
-export default function ObservabilityView({}: ObservabilityViewProps) {
+export default function ObservabilityView({ focusTraceId }: ObservabilityViewProps) {
   const [summary, setSummary] = useState<RagObservabilitySummary | null>(null);
   const [dispatchResult, setDispatchResult] = useState<RagAlertDispatchResult | null>(null);
   const [activeAlerts, setActiveAlerts] = useState<RagObservabilityAlert[]>([]);
@@ -62,6 +64,13 @@ export default function ObservabilityView({}: ObservabilityViewProps) {
   useEffect(() => {
     void fetchDashboard();
   }, []);
+
+  useEffect(() => {
+    if (!focusTraceId) {
+      return;
+    }
+    void handleSelectTrace(focusTraceId);
+  }, [focusTraceId]);
 
   const fetchDashboard = async () => {
     setIsLoading(true);

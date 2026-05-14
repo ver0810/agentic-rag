@@ -1,5 +1,6 @@
 package com.agenticrag.chat.service;
 
+import com.agenticrag.chat.dto.ChatResult;
 import com.agenticrag.user.dao.entity.ConversationEntity;
 import com.agenticrag.user.dao.entity.MessageEntity;
 import reactor.core.publisher.Flux;
@@ -19,6 +20,8 @@ public interface ChatService {
     void deleteSession(String sessionId, String userId);
 
     String chat(String message, String scene, String kbId, String userId, String conversationId);
+
+    ChatResult query(String message, String scene, String kbId, String userId, String conversationId);
 
     Flux<String> stream(String message, String scene, String kbId, String userId, String conversationId);
 }

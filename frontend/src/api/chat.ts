@@ -1,8 +1,34 @@
+import type { RagCitation, RagRetrievedChunk } from './knowledge';
 import axios from 'axios';
+
+export interface MessageMetadata {
+  sourceType?: 'rag' | 'chat';
+  scene?: string;
+  kbId?: string;
+  traceId?: string;
+  rewrittenQuery?: string;
+  citations?: RagCitation[];
+  retrievedChunks?: RagRetrievedChunk[];
+}
 
 export interface Message {
   role: 'user' | 'assistant';
   content: string;
+  sourceType?: 'rag' | 'chat';
+  scene?: string;
+  kbId?: string;
+  traceId?: string;
+  rewrittenQuery?: string;
+  citations?: RagCitation[];
+  retrievedChunks?: RagRetrievedChunk[];
+}
+
+export interface ChatMessageResponse {
+  conversationId: string;
+  userId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  metadataJson?: string;
 }
 
 export interface Conversation {
@@ -14,6 +40,17 @@ export interface Conversation {
 export interface ChatSessionResponse {
   sessionId: string;
   message: string;
+}
+
+export interface ChatResult {
+  answer: string;
+  sourceType: 'rag' | 'chat';
+  scene?: string;
+  kbId?: string;
+  traceId?: string;
+  rewrittenQuery?: string;
+  citations: RagCitation[];
+  retrievedChunks: RagRetrievedChunk[];
 }
 
 const getAuthHeaders = () => {
@@ -29,9 +66,12 @@ export const ChatAPI = {
   getSessions: () => axios.get<any[]>('/chat/sessions'),
   
   getMessages: (conversationId: string) => 
-    axios.get<any[]>(`/chat/messages?conversationId=${conversationId}`),
+    axios.get<ChatMessageResponse[]>(`/chat/messages?conversationId=${conversationId}`),
   
   newSession: () => axios.post<ChatSessionResponse>('/chat/session/new'),
+
+  queryChat: (message: string, conversationId: string, scene?: string, kbId?: string) =>
+    axios.post<ChatResult>('/chat/query', { message, conversationId, scene, kbId }),
   
   renameSession: (conversationId: string, title: string) => 
     axios.put(`/chat/session/${conversationId}/title?title=${encodeURIComponent(title)}`),

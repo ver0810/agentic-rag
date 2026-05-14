@@ -27,6 +27,7 @@ public class IngestionSchemaInitializer {
             addColumnIfMissing("t_knowledge_base", "vector_top_k", "INTEGER");
             addColumnIfMissing("t_knowledge_base", "keyword_top_k", "INTEGER");
             addColumnIfMissing("t_knowledge_base", "prompt_template", "TEXT");
+            addColumnIfMissing("t_message", "metadata_json", "TEXT");
 
             jdbcTemplate.execute("""
                     CREATE TABLE IF NOT EXISTS t_rag_feedback (
