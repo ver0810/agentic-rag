@@ -7,8 +7,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
@@ -24,6 +26,9 @@ public class DocumentChunkingService {
     private static final int DEFAULT_MAX_TOKENS = 512;
     private static final Pattern HEADING_PATTERN = Pattern.compile(
             "^(#{1,6}\\s+.+|第[一二三四五六七八九十百千0-9]+[章节部分篇]\\s*.*|[一二三四五六七八九十]+[、.．].+|\\d+[、.．].+)$");
+    private static final Pattern MARKDOWN_HEADING_PATTERN = Pattern.compile("^(#{1,6})\\s+(.+)$");
+    private static final Pattern TABLE_ROW_PATTERN = Pattern.compile("(?m)^\\|.+\\|\\s*$");
+    private static final Pattern LIST_ITEM_PATTERN = Pattern.compile("(?m)^(-|\\*|\\d+[.])\\s+.+$");
 
     private static final List<String> RECURSIVE_SEPARATORS = List.of(
             "\n\n", "\n", "。", "！", "？", ".", "!", "?", "；", ";", "，", ","
@@ -83,7 +88,7 @@ public class DocumentChunkingService {
             int end = Math.min(start + safeChunkSize, text.length());
             String chunk = text.substring(start, end);
             chunk = truncateToTokenLimit(chunk, maxTokens);
-            chunks.add(new ChunkResult(chunk, null));
+            chunks.add(buildChunkResult(chunk, null));
             start += safeChunkSize - safeOverlap;
         }
         return chunks;
@@ -127,7 +132,7 @@ public class DocumentChunkingService {
                 }
             }
             if (!current.isEmpty()) {
-                chunks.add(new ChunkResult(truncateToTokenLimit(current.toString(), maxTokens), headingPath));
+                chunks.add(buildChunkResult(truncateToTokenLimit(current.toString(), maxTokens), headingPath));
             }
             if (endExclusive >= paragraphs.size()) {
                 break;
@@ -151,11 +156,11 @@ public class DocumentChunkingService {
 
     private void recursiveSplitWithMeta(String text, int maxChars, int overlap, int maxTokens, int separatorIndex, List<ChunkResult> result) {
         if (text.length() <= maxChars && estimateTokens(text) <= maxTokens) {
-            result.add(new ChunkResult(text, null));
+            result.add(buildChunkResult(text, null));
             return;
         }
         if (separatorIndex >= RECURSIVE_SEPARATORS.size()) {
-            result.add(new ChunkResult(truncateToTokenLimit(text, maxTokens), null));
+            result.add(buildChunkResult(truncateToTokenLimit(text, maxTokens), null));
             return;
         }
 
@@ -175,7 +180,7 @@ public class DocumentChunkingService {
             if (candidate.length() > maxChars && !current.isEmpty()) {
                 String chunk = current.toString();
                 if (chunk.length() <= maxChars && estimateTokens(chunk) <= maxTokens) {
-                    result.add(new ChunkResult(chunk, null));
+                    result.add(buildChunkResult(chunk, null));
                 } else {
                     recursiveSplitWithMeta(chunk, maxChars, overlap, maxTokens, separatorIndex + 1, result);
                 }
@@ -188,11 +193,62 @@ public class DocumentChunkingService {
         if (!current.isEmpty()) {
             String chunk = current.toString();
             if (chunk.length() <= maxChars && estimateTokens(chunk) <= maxTokens) {
-                result.add(new ChunkResult(chunk, null));
+                result.add(buildChunkResult(chunk, null));
             } else {
                 recursiveSplitWithMeta(chunk, maxChars, overlap, maxTokens, separatorIndex + 1, result);
             }
         }
+    }
+
+    private ChunkResult buildChunkResult(String content, String headingPath) {
+        return new ChunkResult(content, headingPath, inferChunkMetadata(content, headingPath));
+    }
+
+    private Map<String, Object> inferChunkMetadata(String content, String headingPath) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        String normalized = content == null ? "" : content.trim();
+        if (StringUtils.hasText(headingPath)) {
+            metadata.put("headingLevel", resolveHeadingLevel(headingPath));
+        }
+        boolean hasCodeBlock = normalized.contains("```");
+        boolean hasTable = TABLE_ROW_PATTERN.matcher(normalized).find();
+        boolean hasList = LIST_ITEM_PATTERN.matcher(normalized).find();
+        metadata.put("hasCodeBlock", hasCodeBlock);
+        metadata.put("hasTable", hasTable);
+        metadata.put("hasList", hasList);
+        metadata.put("segmentType", inferSegmentType(normalized, hasCodeBlock, hasTable, hasList, headingPath));
+        return metadata;
+    }
+
+    private String inferSegmentType(String content,
+                                    boolean hasCodeBlock,
+                                    boolean hasTable,
+                                    boolean hasList,
+                                    String headingPath) {
+        if (!StringUtils.hasText(content)) {
+            return "empty";
+        }
+        if (hasTable) {
+            return "table";
+        }
+        if (hasCodeBlock) {
+            return "code";
+        }
+        if (hasList) {
+            return "list";
+        }
+        if (StringUtils.hasText(headingPath) && content.startsWith(headingPath)) {
+            return "section";
+        }
+        return "paragraph";
+    }
+
+    private Integer resolveHeadingLevel(String headingPath) {
+        Matcher matcher = MARKDOWN_HEADING_PATTERN.matcher(headingPath.trim());
+        if (matcher.matches()) {
+            return matcher.group(1).length();
+        }
+        return 1;
     }
 
     private String truncateToTokenLimit(String text, int maxTokens) {

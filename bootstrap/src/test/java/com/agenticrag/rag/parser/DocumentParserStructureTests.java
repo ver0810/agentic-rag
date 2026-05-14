@@ -79,6 +79,35 @@ class DocumentParserStructureTests {
         assertEquals(2, chunks.size());
         assertEquals("# Product Guide", chunks.get(0).headingPath());
         assertEquals("## Setup", chunks.get(1).headingPath());
+        assertEquals(1, chunks.get(0).metadata().get("headingLevel"));
+        assertEquals(2, chunks.get(1).metadata().get("headingLevel"));
+        assertEquals("paragraph", chunks.get(0).metadata().get("segmentType"));
+    }
+
+    @Test
+    void chunkingShouldInferCodeAndTableMetadata() {
+        DocumentChunkingService service = new DocumentChunkingService(new ObjectMapper(), tokenCostEstimator());
+
+        List<ChunkResult> codeChunks = service.chunkWithMetadata("""
+                # API
+
+                ```java
+                System.out.println("hello");
+                ```
+                """, "paragraph", "{\"maxChars\":200}");
+
+        List<ChunkResult> tableChunks = service.chunkWithMetadata("""
+                # Metrics
+
+                | Name | Value |
+                | --- | --- |
+                | Latency | 20ms |
+                """, "paragraph", "{\"maxChars\":200}");
+
+        assertEquals("code", codeChunks.get(0).metadata().get("segmentType"));
+        assertEquals(Boolean.TRUE, codeChunks.get(0).metadata().get("hasCodeBlock"));
+        assertEquals("table", tableChunks.get(0).metadata().get("segmentType"));
+        assertEquals(Boolean.TRUE, tableChunks.get(0).metadata().get("hasTable"));
     }
 
     private TokenCostEstimator tokenCostEstimator() {
