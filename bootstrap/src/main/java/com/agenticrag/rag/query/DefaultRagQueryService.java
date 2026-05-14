@@ -95,8 +95,9 @@ public class DefaultRagQueryService implements RagQueryService {
     @Override
     public RagQueryResult queryDetailed(String query, String kbId, String userId, AiRuntimeContext context, int topK) {
         log.info("RAG query: kbId={}, query={}", kbId, query);
+        KnowledgeBaseSettings kbSettings = resolveKnowledgeBaseSettings(kbId);
         int effectiveTopK = topK > 0 ? topK : ragProperties.getDefaultTopK();
-        double effectiveThreshold = resolveSimilarityThreshold(kbId);
+        double effectiveThreshold = kbSettings.similarityThreshold();
         String traceId = ragTraceRecorder.startRun(
                 "rag_query",
                 "RagQueryService.queryDetailed",
@@ -155,7 +156,7 @@ public class DefaultRagQueryService implements RagQueryService {
                     } else {
                         List<? extends VectorIndexPort.SearchResult> vectorResults = vectorIndexPort.search(
                                 queryEmbedding,
-                                Math.max(effectiveTopK, ragProperties.getVectorTopK()),
+                                Math.max(effectiveTopK, kbSettings.vectorTopK()),
                                 filter)
                                 .stream()
                                 .filter(r -> r.score() >= effectiveThreshold)
@@ -167,7 +168,7 @@ public class DefaultRagQueryService implements RagQueryService {
                     if (ragProperties.isHybridEnabled()) {
                         List<? extends VectorIndexPort.SearchResult> keywordResults = vectorIndexPort.keywordSearch(
                                 q,
-                                Math.max(effectiveTopK, ragProperties.getKeywordTopK()),
+                                Math.max(effectiveTopK, kbSettings.keywordTopK()),
                                 filter)
                                 .stream()
                                 .filter(r -> r.score() >= effectiveThreshold)
@@ -241,7 +242,7 @@ public class DefaultRagQueryService implements RagQueryService {
                     .map(this::toEvidenceBlock)
                     .collect(Collectors.joining("\n\n"));
 
-            String promptTemplate = resolvePromptTemplate(kbId);
+            String promptTemplate = kbSettings.promptTemplate();
             String prompt = String.format(promptTemplate, retrievedContext, query);
             int estimatedPromptTokens = tokenCostEstimator.estimateTokens(prompt);
 
@@ -298,34 +299,40 @@ public class DefaultRagQueryService implements RagQueryService {
         }
     }
 
-    private double resolveSimilarityThreshold(String kbId) {
+    private KnowledgeBaseSettings resolveKnowledgeBaseSettings(String kbId) {
         if (kbId == null) {
-            return ragProperties.getSimilarityThreshold();
+            return new KnowledgeBaseSettings(
+                    ragProperties.getSimilarityThreshold(),
+                    ragProperties.getVectorTopK(),
+                    ragProperties.getKeywordTopK(),
+                    defaultPromptTemplate());
         }
         KnowledgeBaseEntity kb = knowledgeBaseMapper.selectOne(
                 new LambdaQueryWrapper<KnowledgeBaseEntity>()
                         .eq(KnowledgeBaseEntity::getId, kbId)
                         .eq(KnowledgeBaseEntity::getDeleted, 0)
-                        .select(KnowledgeBaseEntity::getSimilarityThreshold)
+                        .select(
+                                KnowledgeBaseEntity::getSimilarityThreshold,
+                                KnowledgeBaseEntity::getVectorTopK,
+                                KnowledgeBaseEntity::getKeywordTopK,
+                                KnowledgeBaseEntity::getPromptTemplate)
                         .last("limit 1"));
-        if (kb != null && kb.getSimilarityThreshold() != null) {
-            return kb.getSimilarityThreshold();
-        }
-        return ragProperties.getSimilarityThreshold();
+        return new KnowledgeBaseSettings(
+                kb != null && kb.getSimilarityThreshold() != null
+                        ? kb.getSimilarityThreshold()
+                        : ragProperties.getSimilarityThreshold(),
+                kb != null && kb.getVectorTopK() != null && kb.getVectorTopK() > 0
+                        ? kb.getVectorTopK()
+                        : ragProperties.getVectorTopK(),
+                kb != null && kb.getKeywordTopK() != null && kb.getKeywordTopK() > 0
+                        ? kb.getKeywordTopK()
+                        : ragProperties.getKeywordTopK(),
+                kb != null && StringUtils.hasText(kb.getPromptTemplate())
+                        ? kb.getPromptTemplate()
+                        : defaultPromptTemplate());
     }
 
-    private String resolvePromptTemplate(String kbId) {
-        if (kbId != null) {
-            KnowledgeBaseEntity kb = knowledgeBaseMapper.selectOne(
-                    new LambdaQueryWrapper<KnowledgeBaseEntity>()
-                            .eq(KnowledgeBaseEntity::getId, kbId)
-                            .eq(KnowledgeBaseEntity::getDeleted, 0)
-                            .select(KnowledgeBaseEntity::getPromptTemplate)
-                            .last("limit 1"));
-            if (kb != null && StringUtils.hasText(kb.getPromptTemplate())) {
-                return kb.getPromptTemplate();
-            }
-        }
+    private String defaultPromptTemplate() {
         if (StringUtils.hasText(ragProperties.getPromptTemplate())) {
             return ragProperties.getPromptTemplate();
         }
@@ -478,4 +485,9 @@ public class DefaultRagQueryService implements RagQueryService {
 
     private record SearchResultView(String chunkId, String content, float score, Map<String, Object> metadata)
             implements VectorIndexPort.SearchResult {}
+
+    private record KnowledgeBaseSettings(double similarityThreshold,
+                                         int vectorTopK,
+                                         int keywordTopK,
+                                         String promptTemplate) {}
 }

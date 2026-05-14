@@ -285,7 +285,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
                         chunkDao.getId(),
                         chunkDao.getContent(),
                         embeddings.get(i),
-                        buildVectorMetadata(doc, chunkDao, embeddings.get(i).length, chunkResults.get(i).headingPath()));
+                        buildVectorMetadata(doc, chunkDao, embeddings.get(i).length, chunkResults.get(i)));
             }
             processLog.setPersistDuration(toMillis(persistStart));
 
@@ -330,18 +330,26 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         }
     }
 
-    private Map<String, Object> buildVectorMetadata(KnowledgeDocumentEntity doc, KnowledgeChunkEntity chunkDao, int dimension, String headingPath) {
+    private Map<String, Object> buildVectorMetadata(KnowledgeDocumentEntity doc,
+                                                    KnowledgeChunkEntity chunkDao,
+                                                    int dimension,
+                                                    ChunkResult chunkResult) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("kbId", doc.getKbId());
         metadata.put("docId", doc.getId());
         metadata.put("chunkId", chunkDao.getId());
         metadata.put("chunkIndex", chunkDao.getChunkIndex());
         metadata.put("docName", doc.getDocName());
+        metadata.put("docType", doc.getFileType());
+        metadata.put("chunkStrategy", doc.getChunkStrategy());
         metadata.put("createdBy", doc.getCreatedBy());
         metadata.put("embeddingModel", embeddingProperties.getModel());
         metadata.put("embeddingDimension", dimension);
-        if (headingPath != null) {
-            metadata.put("headingPath", headingPath);
+        if (chunkResult.headingPath() != null) {
+            metadata.put("headingPath", chunkResult.headingPath());
+        }
+        if (chunkResult.metadata() != null && !chunkResult.metadata().isEmpty()) {
+            metadata.putAll(chunkResult.metadata());
         }
         return metadata;
     }

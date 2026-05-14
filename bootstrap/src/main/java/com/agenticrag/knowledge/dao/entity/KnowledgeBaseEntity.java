@@ -16,6 +16,8 @@ public class KnowledgeBaseEntity {
     private String embeddingModel;
     private String collectionName;
     private Double similarityThreshold;
+    private Integer vectorTopK;
+    private Integer keywordTopK;
     private String promptTemplate;
     private String createdBy;
     private String updatedBy;

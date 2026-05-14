@@ -24,6 +24,8 @@ public class IngestionSchemaInitializer {
             addColumnIfMissing("t_ingestion_task", "lease_owner", "VARCHAR(64)");
             addColumnIfMissing("t_ingestion_task", "lease_until", "TIMESTAMP");
             addColumnIfMissing("t_knowledge_base", "similarity_threshold", "DOUBLE PRECISION");
+            addColumnIfMissing("t_knowledge_base", "vector_top_k", "INTEGER");
+            addColumnIfMissing("t_knowledge_base", "keyword_top_k", "INTEGER");
             addColumnIfMissing("t_knowledge_base", "prompt_template", "TEXT");
 
             jdbcTemplate.execute("""

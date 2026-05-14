@@ -19,6 +19,6 @@ public class DocumentParserFactory {
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Unsupported file type: " + fileExtension +
-                        ". Supported types: pdf, doc, docx, md, txt"));
+                        ". Supported types: pdf, doc, docx, md, markdown, html, htm, txt"));
     }
 }
