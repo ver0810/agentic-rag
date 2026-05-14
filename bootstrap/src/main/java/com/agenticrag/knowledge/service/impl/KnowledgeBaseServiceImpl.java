@@ -8,6 +8,7 @@ import com.agenticrag.infra.ai.port.embedding.KnowledgeEmbeddingPort;
 import com.agenticrag.infra.ai.port.storage.DocumentStoragePort;
 import com.agenticrag.infra.ai.port.vector.VectorIndexPort;
 import com.agenticrag.rag.parser.DocumentParserFactory;
+import com.agenticrag.rag.parser.StructuredParseResult;
 import com.agenticrag.knowledge.dao.entity.KnowledgeBaseEntity;
 import com.agenticrag.knowledge.dao.entity.KnowledgeChunkEntity;
 import com.agenticrag.knowledge.dao.entity.KnowledgeDocumentChunkLogEntity;
@@ -206,18 +207,19 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             log.info("Starting document processing: docId={}, fileUrl={}, fileType={}", docId, doc.getFileUrl(), doc.getFileType());
 
             long extractStart = System.nanoTime();
-            String content;
+            StructuredParseResult parseResult;
             try (InputStream fileStream = documentStoragePort.load(doc.getFileUrl())) {
                 log.info("File loaded successfully");
                 var parser = documentParserFactory.getParser(doc.getFileType());
                 log.info("Parser found: {}", parser.getClass().getSimpleName());
-                content = parser.parse(fileStream, doc.getFileType());
+                parseResult = parser.parseStructured(fileStream, doc.getFileType());
             }
             processLog.setExtractDuration(toMillis(extractStart));
-            log.info("Document parsed, content length: {}", content.length());
+            log.info("Document parsed, segment count: {}, content length: {}",
+                    parseResult.segments().size(), parseResult.asPlainText().length());
 
             long chunkStart = System.nanoTime();
-            List<ChunkResult> chunkResults = documentChunkingService.chunkWithMetadata(content, doc.getChunkStrategy(), doc.getChunkConfig());
+            List<ChunkResult> chunkResults = documentChunkingService.chunkWithMetadata(parseResult, doc.getChunkStrategy(), doc.getChunkConfig());
             List<String> chunks = chunkResults.stream().map(ChunkResult::content).toList();
             processLog.setChunkDuration(toMillis(chunkStart));
             processLog.setChunkCount(chunks.size());

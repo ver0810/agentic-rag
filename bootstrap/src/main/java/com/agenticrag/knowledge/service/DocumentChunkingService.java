@@ -1,6 +1,8 @@
 package com.agenticrag.knowledge.service;
 
 import com.agenticrag.infra.ai.observability.TokenCostEstimator;
+import com.agenticrag.rag.parser.LogicalSegment;
+import com.agenticrag.rag.parser.StructuredParseResult;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
@@ -73,6 +75,23 @@ public class DocumentChunkingService {
         };
     }
 
+    public List<ChunkResult> chunkWithMetadata(StructuredParseResult parseResult, String strategy, String chunkConfig) {
+        if (parseResult == null || parseResult.segments() == null || parseResult.segments().isEmpty()) {
+            return List.of();
+        }
+        String normalizedStrategy = StringUtils.hasText(strategy) ? strategy.trim().toLowerCase() : "paragraph";
+        if (!List.of("paragraph", "smart").contains(normalizedStrategy)) {
+            return chunkWithMetadata(parseResult.asPlainText(), strategy, chunkConfig);
+        }
+        Map<String, Object> config = parseConfig(chunkConfig);
+        return paragraphChunksWithStructuredSegments(
+                parseResult.segments(),
+                intValue(config, "maxChars", DEFAULT_PARAGRAPH_MAX_CHARS),
+                intValue(config, "overlapParagraphs", DEFAULT_PARAGRAPH_OVERLAP),
+                intValue(config, "minChunkChars", DEFAULT_PARAGRAPH_MIN_CHARS),
+                intValue(config, "maxTokens", DEFAULT_MAX_TOKENS));
+    }
+
     private List<String> fixedChunks(String text, int chunkSize, int overlap, int maxTokens) {
         return fixedChunksWithMeta(text, chunkSize, overlap, maxTokens).stream()
                 .map(ChunkResult::content)
@@ -142,6 +161,86 @@ public class DocumentChunkingService {
         return chunks;
     }
 
+    private List<ChunkResult> paragraphChunksWithStructuredSegments(List<LogicalSegment> segments,
+                                                                    int maxChars,
+                                                                    int overlapParagraphs,
+                                                                    int minChunkChars,
+                                                                    int maxTokens) {
+        List<SegmentWithHeading> units = segments.stream()
+                .filter(segment -> StringUtils.hasText(segment.content()))
+                .filter(segment -> !"heading".equals(segment.type()))
+                .map(segment -> new SegmentWithHeading(segment.content(), segment.headingPath(), segment.metadata()))
+                .toList();
+        if (units.isEmpty()) {
+            return chunkWithMetadata(
+                    segments.stream()
+                            .map(LogicalSegment::content)
+                            .filter(StringUtils::hasText)
+                            .reduce((left, right) -> left + "\n\n" + right)
+                            .orElse(""),
+                    "paragraph",
+                    null);
+        }
+
+        List<ChunkResult> chunks = new ArrayList<>();
+        int safeMaxChars = Math.max(200, maxChars);
+        int safeOverlap = Math.max(0, overlapParagraphs);
+        int index = 0;
+        while (index < units.size()) {
+            StringBuilder current = new StringBuilder();
+            String headingPath = null;
+            Integer headingLevel = null;
+            Map<String, Object> mergedMetadata = new LinkedHashMap<>();
+            int endExclusive = index;
+            while (endExclusive < units.size()) {
+                SegmentWithHeading unit = units.get(endExclusive);
+                if (!current.isEmpty()
+                        && StringUtils.hasText(headingPath)
+                        && StringUtils.hasText(unit.headingPath)
+                        && !headingPath.equals(unit.headingPath)
+                        && current.length() >= minChunkChars) {
+                    break;
+                }
+                int nextLength = current.isEmpty() ? unit.text.length() : current.length() + 2 + unit.text.length();
+                if (nextLength > safeMaxChars && current.length() >= minChunkChars) {
+                    break;
+                }
+                if (!current.isEmpty()) {
+                    current.append("\n\n");
+                }
+                if (headingPath == null && StringUtils.hasText(unit.headingPath)) {
+                    headingPath = unit.headingPath;
+                }
+                if (headingLevel == null) {
+                    Object candidate = unit.metadata.get("headingLevel");
+                    if (candidate instanceof Number number) {
+                        headingLevel = number.intValue();
+                    }
+                }
+                mergeSegmentMetadata(mergedMetadata, unit.metadata);
+                current.append(unit.text);
+                endExclusive++;
+                if (current.length() >= safeMaxChars) {
+                    break;
+                }
+            }
+            if (!current.isEmpty()) {
+                ChunkResult base = buildChunkResult(truncateToTokenLimit(current.toString(), maxTokens), headingPath);
+                Map<String, Object> metadata = new LinkedHashMap<>(base.metadata());
+                metadata.putAll(mergedMetadata);
+                if (headingLevel != null) {
+                    metadata.put("headingLevel", headingLevel);
+                }
+                chunks.add(new ChunkResult(base.content(), headingPath, metadata));
+            }
+            if (endExclusive >= units.size()) {
+                break;
+            }
+            index = Math.max(index + 1, endExclusive - safeOverlap);
+        }
+        return chunks;
+    }
+
     private List<String> recursiveChunks(String text, int maxChars, int overlap, int maxTokens) {
         return recursiveChunksWithMeta(text, maxChars, overlap, maxTokens).stream()
                 .map(ChunkResult::content)
@@ -202,6 +301,19 @@ public class DocumentChunkingService {
 
     private ChunkResult buildChunkResult(String content, String headingPath) {
         return new ChunkResult(content, headingPath, inferChunkMetadata(content, headingPath));
+    }
+
+    private void mergeSegmentMetadata(Map<String, Object> target, Map<String, Object> source) {
+        if (source == null || source.isEmpty()) {
+            return;
+        }
+        source.forEach((key, value) -> {
+            if (value instanceof Boolean boolValue && Boolean.TRUE.equals(boolValue)) {
+                target.put(key, true);
+            } else if (!target.containsKey(key) && value != null) {
+                target.put(key, value);
+            }
+        });
     }
 
     private Map<String, Object> inferChunkMetadata(String content, String headingPath) {
@@ -294,6 +406,8 @@ public class DocumentChunkingService {
     }
 
     private record ParagraphWithHeading(String text, String heading) {}
+
+    private record SegmentWithHeading(String text, String headingPath, Map<String, Object> metadata) {}
 
     private boolean isHeading(String block) {
         return block.length() <= 80 && HEADING_PATTERN.matcher(block).matches();
