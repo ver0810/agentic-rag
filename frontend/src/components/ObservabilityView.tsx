@@ -38,6 +38,7 @@ import type { RagTraceRun } from '../api/trace';
 
 interface ObservabilityViewProps {
   focusTraceId?: string | null;
+  onOpenConversation?: (conversationId: string, traceId?: string) => void;
 }
 
 const formatCost = (value?: number) => `$${(value ?? 0).toFixed(4)}`;
@@ -51,7 +52,7 @@ const safeParse = (data?: string) => {
   }
 };
 
-export default function ObservabilityView({ focusTraceId }: ObservabilityViewProps) {
+export default function ObservabilityView({ focusTraceId, onOpenConversation }: ObservabilityViewProps) {
   const [summary, setSummary] = useState<RagObservabilitySummary | null>(null);
   const [dispatchResult, setDispatchResult] = useState<RagAlertDispatchResult | null>(null);
   const [activeAlerts, setActiveAlerts] = useState<RagObservabilityAlert[]>([]);
@@ -121,7 +122,13 @@ export default function ObservabilityView({ focusTraceId }: ObservabilityViewPro
   }
 
   if (selectedTrace) {
-    return <TraceDetailView trace={selectedTrace} onBack={() => setSelectedTrace(null)} />;
+    return (
+      <TraceDetailView
+        trace={selectedTrace}
+        onBack={() => setSelectedTrace(null)}
+        onOpenConversation={onOpenConversation}
+      />
+    );
   }
 
   const metrics = summary?.metrics;
@@ -271,6 +278,15 @@ export default function ObservabilityView({ focusTraceId }: ObservabilityViewPro
                     <td className="px-6 py-4 text-sm text-gray-500 font-medium">{new Date(trace.startTime).toLocaleString()}</td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
+                        {trace.conversationId ? (
+                          <button
+                            type="button"
+                            onClick={() => onOpenConversation?.(trace.conversationId, trace.traceId)}
+                            className="px-3 py-2 rounded-xl text-xs font-medium text-gray-600 transition-all hover:bg-gray-100"
+                          >
+                            Open Chat
+                          </button>
+                        ) : null}
                         <button
                           onClick={() => toggleCompare(trace.traceId)}
                           className={`p-2 rounded-xl transition-all ${
@@ -353,7 +369,15 @@ function formatAlertValue(value?: number) {
   return value.toFixed(3);
 }
 
-function TraceDetailView({ trace, onBack }: { trace: RagTraceRun; onBack: () => void }) {
+function TraceDetailView({
+  trace,
+  onBack,
+  onOpenConversation,
+}: {
+  trace: RagTraceRun;
+  onBack: () => void;
+  onOpenConversation?: (conversationId: string, traceId?: string) => void;
+}) {
   const extra = safeParse(trace.extraData);
 
   return (
@@ -380,6 +404,15 @@ function TraceDetailView({ trace, onBack }: { trace: RagTraceRun; onBack: () => 
             </div>
           </div>
         </div>
+        {trace.conversationId ? (
+          <button
+            type="button"
+            onClick={() => onOpenConversation?.(trace.conversationId, trace.traceId)}
+            className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          >
+            Open Conversation
+          </button>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

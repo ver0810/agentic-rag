@@ -3,6 +3,7 @@ import axios from 'axios';
 import { BrowserRouter as Router, Route, Routes, useNavigate } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
 import { ChatAPI, type Message, type MessageMetadata } from './api/chat';
+import { FeedbackAPI } from './api/feedback';
 import { KnowledgeAPI, type KnowledgeBase } from './api/knowledge';
 import ChatSidebar from './components/chat/ChatSidebar';
 import ChatHeader from './components/chat/ChatHeader';
@@ -51,6 +52,9 @@ function ChatInterface() {
   const [activeKb, setActiveKb] = useState<KnowledgeBase | null>(null);
   const [selectedKbId, setSelectedKbId] = useState<string | null>(null);
   const [focusedTraceId, setFocusedTraceId] = useState<string | null>(null);
+  const [highlightedTraceId, setHighlightedTraceId] = useState<string | null>(null);
+  const [feedbackRatings, setFeedbackRatings] = useState<Record<string, number>>({});
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -79,6 +83,16 @@ function ChatInterface() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    if (!highlightedTraceId) {
+      return;
+    }
+    const target = document.querySelector(`[data-trace-id="${highlightedTraceId}"]`);
+    if (target instanceof HTMLElement) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [messages, highlightedTraceId]);
 
   const fetchBootstrapData = async () => {
     await Promise.all([
@@ -182,6 +196,8 @@ function ChatInterface() {
     }
     setActiveKb(null);
     setSidebarTab('chats');
+    setFocusedTraceId(null);
+    setHighlightedTraceId(null);
     setCurrentSessionId(sessionId);
     void fetchMessages(sessionId);
   };
@@ -398,6 +414,38 @@ function ChatInterface() {
     setObsTab('trace');
   };
 
+  const handleOpenConversationFromTrace = async (conversationId: string, traceId?: string) => {
+    setActiveKb(null);
+    setSidebarTab('chats');
+    setObsTab('trace');
+    setFocusedTraceId(null);
+    setCurrentSessionId(conversationId);
+    setHighlightedTraceId(traceId ?? null);
+    await fetchMessages(conversationId);
+  };
+
+  const handleSubmitFeedback = async (payload: {
+    traceId: string;
+    kbId?: string;
+    query: string;
+    answer: string;
+    rating: number;
+  }) => {
+    setIsSubmittingFeedback(true);
+    try {
+      await FeedbackAPI.submit(payload);
+      setFeedbackRatings((prev) => ({
+        ...prev,
+        [payload.traceId]: payload.rating,
+      }));
+    } catch (err) {
+      console.error('Failed to submit feedback', err);
+      setError('Failed to submit feedback');
+    } finally {
+      setIsSubmittingFeedback(false);
+    }
+  };
+
   return (
     <div className="flex h-screen bg-white text-[#171717] font-sans selection:bg-[#E5E5E5] overflow-hidden">
       <Suspense fallback={null}>
@@ -499,7 +547,12 @@ function ChatInterface() {
         <div className="flex-1 overflow-y-auto scrollbar-hide pt-4">
           <Suspense fallback={<ContentFallback />}>
             {sidebarTab === 'observability' ? (
-              obsTab === 'trace' ? <ObservabilityView focusTraceId={focusedTraceId} /> : <EvalView />
+              obsTab === 'trace' ? (
+                <ObservabilityView
+                  focusTraceId={focusedTraceId}
+                  onOpenConversation={handleOpenConversationFromTrace}
+                />
+              ) : <EvalView />
             ) : activeKb ? (
               <KnowledgeBaseView kb={activeKb} onDelete={() => void handleDeleteKb(activeKb.id)} />
             ) : (
@@ -509,7 +562,11 @@ function ChatInterface() {
                 isLoading={isLoading}
                 messagesEndRef={messagesEndRef}
                 knowledgeBases={knowledgeBases}
+                highlightedTraceId={highlightedTraceId}
+                feedbackRatings={feedbackRatings}
+                isSubmittingFeedback={isSubmittingFeedback}
                 onTraceClick={handleTraceClick}
+                onSubmitFeedback={handleSubmitFeedback}
                 onSuggestionClick={setInput}
               />
             )}

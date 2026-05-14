@@ -1,4 +1,4 @@
-import { Bot, Bug, Copy, Mail, Map, Search, ThumbsUp, User } from 'lucide-react';
+import { Bot, Bug, Copy, Mail, Map, Search, ThumbsDown, ThumbsUp, User } from 'lucide-react';
 import type { RefObject } from 'react';
 import MessageContent from '../MessageContent';
 import type { Message } from '../../api/chat';
@@ -10,7 +10,17 @@ interface ChatContentProps {
   isLoading: boolean;
   messagesEndRef: RefObject<HTMLDivElement | null>;
   knowledgeBases: KnowledgeBase[];
+  highlightedTraceId?: string | null;
+  feedbackRatings?: Record<string, number>;
+  isSubmittingFeedback?: boolean;
   onTraceClick?: (traceId: string) => void;
+  onSubmitFeedback?: (payload: {
+    traceId: string;
+    kbId?: string;
+    query: string;
+    answer: string;
+    rating: number;
+  }) => void;
   onSuggestionClick: (value: string) => void;
 }
 
@@ -27,7 +37,11 @@ export default function ChatContent({
   isLoading,
   messagesEndRef,
   knowledgeBases,
+  highlightedTraceId,
+  feedbackRatings,
+  isSubmittingFeedback,
   onTraceClick,
+  onSubmitFeedback,
   onSuggestionClick,
 }: ChatContentProps) {
   const resolveKbName = (kbId?: string) =>
@@ -62,19 +76,31 @@ export default function ChatContent({
       ) : (
         <div className="space-y-8 pb-32">
           {messages.map((message, index) => (
-            <div key={`${message.role}-${index}`} className={`flex gap-4 group ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            (() => {
+              const previousUserMessage = [...messages.slice(0, index)].reverse().find((item) => item.role === 'user');
+              const feedbackRating = message.traceId ? feedbackRatings?.[message.traceId] : undefined;
+              return (
+            <div
+              key={`${message.role}-${index}`}
+              className={`flex gap-4 group ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
               {message.role === 'assistant' ? (
                 <div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center text-white flex-shrink-0 mt-0.5 shadow-sm">
                   <Bot size={18} />
                 </div>
               ) : null}
 
-              <div className={`group relative flex flex-col gap-1 max-w-[85%] ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
+              <div
+                className={`group relative flex flex-col gap-1 max-w-[85%] ${message.role === 'user' ? 'items-end' : 'items-start'}`}
+                data-trace-id={message.traceId}
+              >
                 <div
                   className={`px-4 py-2.5 rounded-2xl text-[15px] leading-relaxed ${
                     message.role === 'user'
                       ? 'bg-[#f4f4f4] text-[#171717] rounded-tr-sm'
-                      : 'bg-white text-[#171717]'
+                      : message.traceId && highlightedTraceId === message.traceId
+                        ? 'bg-emerald-50 text-[#171717] ring-1 ring-emerald-200 shadow-sm'
+                        : 'bg-white text-[#171717]'
                   }`}
                 >
                   {message.role === 'assistant' && isLoading && index === messages.length - 1 && !message.content ? (
@@ -190,8 +216,53 @@ export default function ChatContent({
                     >
                       <Copy size={14} />
                     </button>
-                    <button className="p-1.5 hover:bg-gray-100 rounded text-gray-400 hover:text-gray-600">
+                    <button
+                      type="button"
+                      disabled={!message.traceId || !previousUserMessage?.content || isSubmittingFeedback}
+                      onClick={() => {
+                        if (!message.traceId || !previousUserMessage?.content) {
+                          return;
+                        }
+                        onSubmitFeedback?.({
+                          traceId: message.traceId,
+                          kbId: message.kbId,
+                          query: previousUserMessage.content,
+                          answer: message.content,
+                          rating: 5,
+                        });
+                      }}
+                      className={`p-1.5 rounded transition-colors ${
+                        feedbackRating === 5
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'hover:bg-gray-100 text-gray-400 hover:text-gray-600'
+                      }`}
+                      title="Helpful"
+                    >
                       <ThumbsUp size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!message.traceId || !previousUserMessage?.content || isSubmittingFeedback}
+                      onClick={() => {
+                        if (!message.traceId || !previousUserMessage?.content) {
+                          return;
+                        }
+                        onSubmitFeedback?.({
+                          traceId: message.traceId,
+                          kbId: message.kbId,
+                          query: previousUserMessage.content,
+                          answer: message.content,
+                          rating: 1,
+                        });
+                      }}
+                      className={`p-1.5 rounded transition-colors ${
+                        feedbackRating === 1
+                          ? 'bg-red-100 text-red-700'
+                          : 'hover:bg-gray-100 text-gray-400 hover:text-gray-600'
+                      }`}
+                      title="Not helpful"
+                    >
+                      <ThumbsDown size={14} />
                     </button>
                   </div>
                 ) : null}
@@ -203,6 +274,8 @@ export default function ChatContent({
                 </div>
               ) : null}
             </div>
+              );
+            })()
           ))}
           <div ref={messagesEndRef} />
         </div>
