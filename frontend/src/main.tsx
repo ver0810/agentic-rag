@@ -3,16 +3,10 @@ import { createRoot } from 'react-dom/client'
 import axios from 'axios'
 import './index.css'
 import App from './App.tsx'
+import { clearAuth } from './utils/auth'
 
 let isRefreshing = false
 let pendingRequests: Array<(token: string | null) => void> = []
-
-const clearAuth = () => {
-  localStorage.removeItem('token')
-  localStorage.removeItem('refreshToken')
-  localStorage.removeItem('user')
-  localStorage.removeItem('userId')
-}
 
 const resolvePendingRequests = (token: string | null) => {
   pendingRequests.forEach((callback) => callback(token))
