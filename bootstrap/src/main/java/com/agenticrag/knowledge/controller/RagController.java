@@ -36,7 +36,8 @@ public class RagController {
                 request.kbId(),
                 userId,
                 context,
-                request.topK()));
+                request.topK(),
+                "standalone-" + request.kbId()));
         return ResponseEntity.ok(result);
     }
 

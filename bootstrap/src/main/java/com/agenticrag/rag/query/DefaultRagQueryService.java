@@ -1,5 +1,7 @@
 package com.agenticrag.rag.query;
 
+import com.agenticrag.chat.dto.ChatEvent;
+import com.agenticrag.chat.dto.ChatResult;
 import com.agenticrag.infra.ai.config.RagProperties;
 import com.agenticrag.infra.ai.model.AiChatScene;
 import com.agenticrag.infra.ai.model.AiRuntimeContext;
@@ -14,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -100,210 +103,166 @@ public class DefaultRagQueryService implements RagQueryService {
 
     @Override
     public RagQueryResult queryDetailed(String query, String kbId, String userId, AiRuntimeContext context, String conversationId, int topK) {
-        log.info("RAG query: kbId={}, query={}, conversationId={}", kbId, query, conversationId);
-        KnowledgeBaseSettings kbSettings = resolveKnowledgeBaseSettings(kbId);
+        String traceId = ragTraceRecorder.startRun("rag_query", "RagQueryService.queryDetailed", conversationId, userId, Map.of("kbId", kbId, "query", query));
+        try {
+            RetrievalResult retrievalResult = retrieve(query, kbId, userId, context, topK, traceId);
+            String prompt = String.format(retrievalResult.promptTemplate(), retrievalResult.retrievedContext(), query);
+            int estimatedPromptTokens = tokenCostEstimator.estimateTokens(prompt);
+
+            String generateNodeId = ragTraceRecorder.startNode(traceId, "generate", "answer_generation", Map.of("contextChunkCount", retrievalResult.results().size()));
+            String answer = chatService.call(AiChatScene.RAG_QA, prompt, context, conversationId, userId);
+            
+            int estimatedAnswerTokens = tokenCostEstimator.estimateTokens(answer);
+            ragTraceRecorder.completeNode(traceId, generateNodeId, Map.of("answerLength", answer.length()));
+
+            completeTrace(traceId, retrievalResult, answer, estimatedPromptTokens, estimatedAnswerTokens);
+            
+            return new RagQueryResult(
+                    answer,
+                    traceId,
+                    retrievalResult.queries().get(0),
+                    retrievalResult.results().stream().map(this::toCitation).toList(),
+                    retrievalResult.results().stream().map(this::toRetrievedChunk).toList());
+        } catch (Exception ex) {
+            ragTraceRecorder.failRun(traceId, ex.getMessage(), Map.of());
+            throw ex;
+        }
+    }
+
+    @Override
+    public Flux<ChatEvent> streamQueryDetailed(String query, String kbId, String userId, AiRuntimeContext context, String conversationId, int topK) {
+        String traceId = ragTraceRecorder.startRun("rag_query_stream", "RagQueryService.streamQueryDetailed", conversationId, userId, Map.of("kbId", kbId, "query", query));
+        try {
+            RetrievalResult retrievalResult = retrieve(query, kbId, userId, context, topK, traceId);
+            
+            ChatResult metadata = new ChatResult(
+                    null,
+                    "rag",
+                    AiChatScene.RAG_QA.code(),
+                    kbId,
+                    traceId,
+                    retrievalResult.queries().get(0),
+                    retrievalResult.results().stream().map(this::toCitation).toList(),
+                    retrievalResult.results().stream().map(this::toRetrievedChunk).toList()
+            );
+
+            String prompt = String.format(retrievalResult.promptTemplate(), retrievalResult.retrievedContext(), query);
+            int estimatedPromptTokens = tokenCostEstimator.estimateTokens(prompt);
+            String generateNodeId = ragTraceRecorder.startNode(traceId, "generate", "answer_generation", Map.of("contextChunkCount", retrievalResult.results().size()));
+            StringBuilder fullAnswer = new StringBuilder();
+
+            return Flux.concat(
+                    Flux.just(ChatEvent.metadata(metadata)),
+                    chatService.stream(AiChatScene.RAG_QA, prompt, context, conversationId, userId)
+                            .map(ChatEvent::chunk)
+                            .doOnNext(event -> fullAnswer.append((String) event.data()))
+                            .doOnComplete(() -> {
+                                int estimatedAnswerTokens = tokenCostEstimator.estimateTokens(fullAnswer.toString());
+                                ragTraceRecorder.completeNode(traceId, generateNodeId, Map.of("answerLength", fullAnswer.length()));
+                                completeTrace(traceId, retrievalResult, fullAnswer.toString(), estimatedPromptTokens, estimatedAnswerTokens);
+                            }),
+                    Flux.just(ChatEvent.done())
+            ).onErrorResume(ex -> {
+                ragTraceRecorder.failRun(traceId, ex.getMessage(), Map.of());
+                return Flux.just(ChatEvent.error(ex.getMessage()));
+            });
+        } catch (Exception ex) {
+            ragTraceRecorder.failRun(traceId, ex.getMessage(), Map.of());
+            return Flux.just(ChatEvent.error(ex.getMessage()));
+        }
+    }
+
+    private RetrievalResult retrieve(String query, String kbId, String userId, AiRuntimeContext context, int topK, String traceId) {
         int effectiveTopK = topK > 0 ? topK : ragProperties.getDefaultTopK();
+        KnowledgeBaseSettings kbSettings = resolveKnowledgeBaseSettings(kbId);
         double effectiveThreshold = kbSettings.similarityThreshold();
 
-        String traceId = ragTraceRecorder.startRun(
-                "rag_query",
-                "RagQueryService.queryDetailed",
-                conversationId,
-                userId,
-                Map.of("kbId", kbId, "query", query, "topK", effectiveTopK));
+        List<String> queries = rewriteQuery(query, userId, context, traceId);
+        String retrieveNodeId = ragTraceRecorder.startNode(traceId, "retrieve", "hybrid_retrieve", Map.of("queries", queries));
+        
         try {
-            List<String> queries;
-            if (ragProperties.isRewriteEnabled() && ragProperties.isMultiQueryEnabled()) {
-                String rewriteNodeId = ragTraceRecorder.startNode(traceId, "rewrite", "multi_query_rewrite", Map.of("query", query));
-                try {
-                    queries = ragQueryRewriteService.rewriteMultiple(query, ragProperties.getMultiQueryCount(), userId, context);
-                    ragTraceRecorder.completeNode(traceId, rewriteNodeId, Map.of("queryCount", queries.size(), "queries", queries));
-                } catch (Exception ex) {
-                    ragTraceRecorder.failNode(traceId, rewriteNodeId, ex.getMessage(), Map.of());
-                    queries = List.of(query);
-                }
-            } else if (ragProperties.isRewriteEnabled()) {
-                String rewriteNodeId = ragTraceRecorder.startNode(traceId, "rewrite", "query_rewrite", Map.of("query", query));
-                try {
-                    String rewrittenQuery = ragQueryRewriteService.rewrite(query, userId, context);
-                    queries = List.of(rewrittenQuery);
-                    ragTraceRecorder.completeNode(traceId, rewriteNodeId, Map.of("rewrittenQuery", rewrittenQuery));
-                } catch (Exception ex) {
-                    ragTraceRecorder.failNode(traceId, rewriteNodeId, ex.getMessage(), Map.of());
-                    queries = List.of(query);
-                }
-            } else {
-                queries = List.of(query);
-            }
-
-            String retrieveNodeId = ragTraceRecorder.startNode(traceId, "retrieve", "hybrid_retrieve", Map.of("queries", queries));
-            List<? extends VectorIndexPort.SearchResult> results;
             int totalEstimatedEmbeddingTokens = 0;
             double totalEstimatedEmbeddingCost = 0;
-            try {
-                Map<String, Object> filter = Map.of("kbId", kbId);
-                List<List<? extends VectorIndexPort.SearchResult>> allVectorResults = new ArrayList<>();
-                List<List<? extends VectorIndexPort.SearchResult>> allKeywordResults = new ArrayList<>();
+            Map<String, Object> filter = Map.of("kbId", kbId);
+            List<List<? extends VectorIndexPort.SearchResult>> allVectorResults = new ArrayList<>();
+            List<List<? extends VectorIndexPort.SearchResult>> allKeywordResults = new ArrayList<>();
 
-                for (String q : queries) {
-                    int estimatedTokens = tokenCostEstimator.estimateTokens(q);
-                    totalEstimatedEmbeddingTokens += estimatedTokens;
-                    totalEstimatedEmbeddingCost += tokenCostEstimator.estimateEmbeddingCost(estimatedTokens);
+            for (String q : queries) {
+                int estimatedTokens = tokenCostEstimator.estimateTokens(q);
+                totalEstimatedEmbeddingTokens += estimatedTokens;
+                totalEstimatedEmbeddingCost += tokenCostEstimator.estimateEmbeddingCost(estimatedTokens);
 
-                    float[] queryEmbedding = ragCacheService.getEmbedding(q);
-                    if (queryEmbedding == null) {
-                        queryEmbedding = embeddingPort.embed(q);
-                        ragCacheService.putEmbedding(q, queryEmbedding);
-                    }
-
-                    String resultCacheKey = RagCacheService.buildResultCacheKey(q, kbId, effectiveTopK);
-                    List<? extends VectorIndexPort.SearchResult> cachedResults = ragCacheService.getResults(resultCacheKey);
-                    if (cachedResults != null) {
-                        allVectorResults.add(cachedResults);
-                    } else {
-                        List<? extends VectorIndexPort.SearchResult> vectorResults = vectorIndexPort.search(
-                                queryEmbedding,
-                                Math.max(effectiveTopK, kbSettings.vectorTopK()),
-                                filter)
-                                .stream()
-                                .filter(r -> r.score() >= effectiveThreshold)
-                                .toList();
-                        ragCacheService.putResults(resultCacheKey, vectorResults);
-                        allVectorResults.add(vectorResults);
-                    }
-
-                    if (ragProperties.isHybridEnabled()) {
-                        List<? extends VectorIndexPort.SearchResult> keywordResults = vectorIndexPort.keywordSearch(
-                                q,
-                                Math.max(effectiveTopK, kbSettings.keywordTopK()),
-                                filter)
-                                .stream()
-                                .filter(r -> r.score() >= effectiveThreshold)
-                                .toList();
-                        allKeywordResults.add(keywordResults);
-                    }
+                float[] queryEmbedding = ragCacheService.getEmbedding(q);
+                if (queryEmbedding == null) {
+                    queryEmbedding = embeddingPort.embed(q);
+                    ragCacheService.putEmbedding(q, queryEmbedding);
                 }
 
-                if (queries.size() == 1) {
-                    List<? extends VectorIndexPort.SearchResult> vectorResults = allVectorResults.get(0);
-                    results = vectorResults;
-                    if (ragProperties.isHybridEnabled() && !allKeywordResults.isEmpty()) {
-                        results = mergeResults(vectorResults, allKeywordResults.get(0), effectiveTopK);
-                    } else {
-                        results = vectorResults.stream()
-                                .sorted(Comparator.comparing(VectorIndexPort.SearchResult::score).reversed())
-                                .limit(effectiveTopK)
-                                .toList();
-                    }
-                } else {
-                    results = mergeMultiQueryResults(allVectorResults, allKeywordResults, effectiveTopK);
-                }
+                List<? extends VectorIndexPort.SearchResult> vectorResults = vectorIndexPort.search(queryEmbedding, effectiveTopK, filter)
+                        .stream().filter(r -> r.score() >= effectiveThreshold).toList();
+                allVectorResults.add(vectorResults);
 
-                int totalVectorCount = allVectorResults.stream().mapToInt(List::size).sum();
-                int totalKeywordCount = allKeywordResults.stream().mapToInt(List::size).sum();
-                ragTraceRecorder.completeNode(traceId, retrieveNodeId, Map.of(
-                        "queryCount", queries.size(),
-                        "vectorResultCount", totalVectorCount,
-                        "keywordResultCount", totalKeywordCount,
-                        "filteredResultCount", results.size(),
-                        "estimatedEmbeddingTokens", totalEstimatedEmbeddingTokens,
-                        "estimatedEmbeddingCost", totalEstimatedEmbeddingCost));
-            } catch (Exception ex) {
-                ragTraceRecorder.failNode(traceId, retrieveNodeId, ex.getMessage(), Map.of());
-                throw ex;
+                if (ragProperties.isHybridEnabled()) {
+                    List<? extends VectorIndexPort.SearchResult> keywordResults = vectorIndexPort.keywordSearch(q, effectiveTopK, filter)
+                            .stream().filter(r -> r.score() >= effectiveThreshold).toList();
+                    allKeywordResults.add(keywordResults);
+                }
             }
 
+            List<? extends VectorIndexPort.SearchResult> results = queries.size() == 1 ? allVectorResults.get(0) : mergeMultiQueryResults(allVectorResults, allKeywordResults, effectiveTopK);
             if (ragProperties.isRerankEnabled()) {
-                String rerankNodeId = ragTraceRecorder.startNode(traceId, "rerank", "lexical_rerank", Map.of("candidateCount", results.size()));
-                try {
-                    results = ragRerankService.rerank(query, results, effectiveTopK);
-                    ragTraceRecorder.completeNode(traceId, rerankNodeId, Map.of("rerankedCount", results.size()));
-                } catch (Exception ex) {
-                    ragTraceRecorder.failNode(traceId, rerankNodeId, ex.getMessage(), Map.of());
-                    throw ex;
-                }
-            } else {
-                results = results.stream().limit(effectiveTopK).toList();
+                results = ragRerankService.rerank(query, results, effectiveTopK);
             }
 
-            if (results.isEmpty()) {
-                log.info("No relevant context found for query: {}", query);
-                RagQueryResult emptyResult = new RagQueryResult(
-                        "抱歉，我无法根据现有的知识库内容回答您的问题。请尝试换个问题，或者确认知识库中是否有相关信息。",
-                        traceId,
-                        queries.get(0),
-                        List.of(),
-                        List.of());
-                ragTraceRecorder.completeRun(traceId, Map.of(
-                        "queries", queries,
-                        "answerState", "empty_retrieval",
-                        "estimatedEmbeddingTokens", totalEstimatedEmbeddingTokens,
-                        "estimatedEmbeddingCost", totalEstimatedEmbeddingCost,
-                        "estimatedTotalTokens", totalEstimatedEmbeddingTokens,
-                        "estimatedTotalCost", totalEstimatedEmbeddingCost));
-                return emptyResult;
-            }
-
+            ragTraceRecorder.completeNode(traceId, retrieveNodeId, Map.of("resultCount", results.size()));
+            
             String retrievedContext = results.stream()
                     .limit(ragProperties.getMaxContextChunks())
                     .map(this::toEvidenceBlock)
                     .collect(Collectors.joining("\n\n"));
 
-            String promptTemplate = kbSettings.promptTemplate();
-            String prompt = String.format(promptTemplate, retrievedContext, query);
-            int estimatedPromptTokens = tokenCostEstimator.estimateTokens(prompt);
-
-            log.info("RAG query found {} relevant chunks, generating answer...", results.size());
-
-            String generateNodeId = ragTraceRecorder.startNode(traceId, "generate", "answer_generation", Map.of("contextChunkCount", Math.min(results.size(), ragProperties.getMaxContextChunks())));
-            String answer;
-            try {
-                answer = chatService.call(AiChatScene.RAG_QA, prompt, context, conversationId, userId);
-                int estimatedAnswerTokens = tokenCostEstimator.estimateTokens(answer);
-                ragTraceRecorder.completeNode(traceId, generateNodeId, Map.of(
-                        "promptLength", prompt.length(),
-                        "answerLength", answer.length(),
-                        "estimatedChatInputTokens", estimatedPromptTokens,
-                        "estimatedChatOutputTokens", estimatedAnswerTokens,
-                        "estimatedChatInputCost", tokenCostEstimator.estimateChatInputCost(estimatedPromptTokens),
-                        "estimatedChatOutputCost", tokenCostEstimator.estimateChatOutputCost(estimatedAnswerTokens)));
-            } catch (Exception ex) {
-                ragTraceRecorder.failNode(traceId, generateNodeId, ex.getMessage(), Map.of());
-                throw ex;
-            }
-
-            int estimatedAnswerTokens = tokenCostEstimator.estimateTokens(answer);
-            double estimatedChatInputCost = tokenCostEstimator.estimateChatInputCost(estimatedPromptTokens);
-            double estimatedChatOutputCost = tokenCostEstimator.estimateChatOutputCost(estimatedAnswerTokens);
-            double estimatedTotalCost = tokenCostEstimator.round6(totalEstimatedEmbeddingCost + estimatedChatInputCost + estimatedChatOutputCost);
-            String answerState = determineAnswerState(answer);
-
-            RagQueryResult result = new RagQueryResult(
-                    answer,
-                    traceId,
-                    queries.get(0),
-                    results.stream().map(this::toCitation).toList(),
-                    results.stream().map(this::toRetrievedChunk).toList());
-            Map<String, Object> runExtraData = new LinkedHashMap<>();
-            runExtraData.put("queries", queries);
-            runExtraData.put("answerState", answerState);
-            runExtraData.put("citationCount", result.citations().size());
-            runExtraData.put("retrievedChunkCount", result.retrievedChunks().size());
-            runExtraData.put("estimatedEmbeddingTokens", totalEstimatedEmbeddingTokens);
-            runExtraData.put("estimatedEmbeddingCost", totalEstimatedEmbeddingCost);
-            runExtraData.put("estimatedChatInputTokens", estimatedPromptTokens);
-            runExtraData.put("estimatedChatOutputTokens", estimatedAnswerTokens);
-            runExtraData.put("estimatedChatInputCost", estimatedChatInputCost);
-            runExtraData.put("estimatedChatOutputCost", estimatedChatOutputCost);
-            runExtraData.put("estimatedTotalTokens", totalEstimatedEmbeddingTokens + estimatedPromptTokens + estimatedAnswerTokens);
-            runExtraData.put("estimatedTotalCost", estimatedTotalCost);
-            ragTraceRecorder.completeRun(traceId, runExtraData);
-            return result;
+            return new RetrievalResult(queries, results, retrievedContext, kbSettings.promptTemplate(), totalEstimatedEmbeddingTokens, totalEstimatedEmbeddingCost);
         } catch (Exception ex) {
-            ragTraceRecorder.failRun(traceId, ex.getMessage(), Map.of("kbId", kbId, "answerState", "error"));
+            ragTraceRecorder.failNode(traceId, retrieveNodeId, ex.getMessage(), Map.of());
             throw ex;
         }
     }
+
+    private List<String> rewriteQuery(String query, String userId, AiRuntimeContext context, String traceId) {
+        if (ragProperties.isRewriteEnabled()) {
+            String rewriteNodeId = ragTraceRecorder.startNode(traceId, "rewrite", "query_rewrite", Map.of("query", query));
+            try {
+                String rewritten = ragQueryRewriteService.rewrite(query, userId, context);
+                ragTraceRecorder.completeNode(traceId, rewriteNodeId, Map.of("rewrittenQuery", rewritten));
+                return List.of(rewritten);
+            } catch (Exception ex) {
+                ragTraceRecorder.failNode(traceId, rewriteNodeId, ex.getMessage(), Map.of());
+            }
+        }
+        return List.of(query);
+    }
+
+    private void completeTrace(String traceId, RetrievalResult retrievalResult, String answer, int estimatedPromptTokens, int estimatedAnswerTokens) {
+        double estimatedChatInputCost = tokenCostEstimator.estimateChatInputCost(estimatedPromptTokens);
+        double estimatedChatOutputCost = tokenCostEstimator.estimateChatOutputCost(estimatedAnswerTokens);
+        double totalCost = tokenCostEstimator.round6(retrievalResult.totalEstimatedEmbeddingCost() + estimatedChatInputCost + estimatedChatOutputCost);
+
+        Map<String, Object> runExtraData = new LinkedHashMap<>();
+        runExtraData.put("queries", retrievalResult.queries());
+        runExtraData.put("answerState", determineAnswerState(answer));
+        runExtraData.put("estimatedTotalTokens", retrievalResult.totalEstimatedEmbeddingTokens() + estimatedPromptTokens + estimatedAnswerTokens);
+        runExtraData.put("estimatedTotalCost", totalCost);
+        ragTraceRecorder.completeRun(traceId, runExtraData);
+    }
+
+    private record RetrievalResult(
+            List<String> queries,
+            List<? extends VectorIndexPort.SearchResult> results,
+            String retrievedContext,
+            String promptTemplate,
+            int totalEstimatedEmbeddingTokens,
+            double totalEstimatedEmbeddingCost
+    ) {}
 
     private KnowledgeBaseSettings resolveKnowledgeBaseSettings(String kbId) {
         if (kbId == null) {
@@ -440,37 +399,6 @@ public class DefaultRagQueryService implements RagQueryService {
             suffix.append(" ").append(headingPath);
         }
         return suffix.toString();
-    }
-
-    private List<SearchResultView> mergeResults(List<? extends VectorIndexPort.SearchResult> vectorResults,
-                                                List<? extends VectorIndexPort.SearchResult> keywordResults,
-                                                int topK) {
-        int k = ragProperties.getRrfK();
-        Map<String, Double> rrfScores = new LinkedHashMap<>();
-        Map<String, VectorIndexPort.SearchResult> resultLookup = new LinkedHashMap<>();
-
-        for (int i = 0; i < vectorResults.size(); i++) {
-            VectorIndexPort.SearchResult result = vectorResults.get(i);
-            double rrfScore = 1.0 / (k + i + 1);
-            rrfScores.merge(result.chunkId(), rrfScore, Double::sum);
-            resultLookup.putIfAbsent(result.chunkId(), result);
-        }
-
-        for (int i = 0; i < keywordResults.size(); i++) {
-            VectorIndexPort.SearchResult result = keywordResults.get(i);
-            double rrfScore = 1.0 / (k + i + 1);
-            rrfScores.merge(result.chunkId(), rrfScore, Double::sum);
-            resultLookup.putIfAbsent(result.chunkId(), result);
-        }
-
-        return rrfScores.entrySet().stream()
-                .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
-                .limit(topK)
-                .map(entry -> {
-                    VectorIndexPort.SearchResult source = resultLookup.get(entry.getKey());
-                    return new SearchResultView(source.chunkId(), source.content(), entry.getValue().floatValue(), source.metadata());
-                })
-                .toList();
     }
 
     private List<? extends VectorIndexPort.SearchResult> mergeMultiQueryResults(

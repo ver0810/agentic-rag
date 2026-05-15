@@ -1,5 +1,6 @@
 package com.agenticrag.chat.service;
 
+import com.agenticrag.chat.dto.ChatEvent;
 import com.agenticrag.chat.dto.ChatResult;
 import com.agenticrag.user.dao.entity.ConversationEntity;
 import com.agenticrag.user.dao.entity.MessageEntity;
@@ -23,5 +24,5 @@ public interface ChatService {
 
     ChatResult query(String message, String scene, String kbId, String userId, String conversationId);
 
-    Flux<String> stream(String message, String scene, String kbId, String userId, String conversationId);
+    Flux<ChatEvent> stream(String message, String scene, String kbId, String userId, String conversationId);
 }

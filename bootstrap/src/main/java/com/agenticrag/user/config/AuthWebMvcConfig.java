@@ -12,6 +12,8 @@ import org.springframework.web.method.support.HandlerMethodArgumentResolver;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import com.agenticrag.user.auth.JwtProperties;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.web.servlet.config.annotation.AsyncSupportConfigurer;
 
 @Configuration
 @EnableConfigurationProperties(JwtProperties.class)
@@ -19,11 +21,19 @@ public class AuthWebMvcConfig implements WebMvcConfigurer {
 
     private final JwtAuthenticationInterceptor jwtAuthenticationInterceptor;
     private final CurrentUserIdArgumentResolver currentUserIdArgumentResolver;
+    private final ThreadPoolTaskExecutor applicationTaskExecutor;
 
     public AuthWebMvcConfig(JwtAuthenticationInterceptor jwtAuthenticationInterceptor,
-                            CurrentUserIdArgumentResolver currentUserIdArgumentResolver) {
+                            CurrentUserIdArgumentResolver currentUserIdArgumentResolver,
+                            ThreadPoolTaskExecutor applicationTaskExecutor) {
         this.jwtAuthenticationInterceptor = jwtAuthenticationInterceptor;
         this.currentUserIdArgumentResolver = currentUserIdArgumentResolver;
+        this.applicationTaskExecutor = applicationTaskExecutor;
+    }
+
+    @Override
+    public void configureAsyncSupport(AsyncSupportConfigurer configurer) {
+        configurer.setTaskExecutor(applicationTaskExecutor);
     }
 
     @Override

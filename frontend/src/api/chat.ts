@@ -84,7 +84,7 @@ export const ChatAPI = {
     conversationId: string, 
     scene?: string, 
     kbId?: string,
-    onUpdate?: (text: string) => void
+    onUpdate?: (text: string, metadata?: ChatResult) => void
   ) => {
     const url = new URL('/chat/stream', window.location.origin);
     url.searchParams.append('message', message);
@@ -112,13 +112,39 @@ export const ChatAPI = {
     const decoder = new TextDecoder();
     let done = false;
     let accumulatedContent = '';
+    let currentMetadata: ChatResult | undefined;
 
     while (!done) {
       const { value, done: doneReading } = await reader.read();
       done = doneReading;
+      if (done) break;
+
       const chunkValue = decoder.decode(value);
-      accumulatedContent += chunkValue;
-      if (onUpdate) onUpdate(accumulatedContent);
+      const lines = chunkValue.split('\n');
+      
+      for (const line of lines) {
+        if (line.startsWith('data:')) {
+          const dataStr = line.substring(5).trim();
+          if (!dataStr) continue;
+          
+          try {
+            const event = JSON.parse(dataStr);
+            if (event.type === 'metadata') {
+              currentMetadata = event.data;
+              if (onUpdate) onUpdate(accumulatedContent, currentMetadata);
+            } else if (event.type === 'chunk') {
+              accumulatedContent += event.data;
+              if (onUpdate) onUpdate(accumulatedContent, currentMetadata);
+            } else if (event.type === 'error') {
+              throw new Error(event.data);
+            } else if (event.type === 'done') {
+              done = true;
+            }
+          } catch (e) {
+            console.warn('Failed to parse SSE event:', e, dataStr);
+          }
+        }
+      }
     }
 
     return accumulatedContent;

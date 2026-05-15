@@ -9,6 +9,19 @@ import java.util.concurrent.Executor;
 @Configuration
 public class AsyncConfiguration {
 
+    @Bean(name = "applicationTaskExecutor")
+    public ThreadPoolTaskExecutor applicationTaskExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setThreadNamePrefix("app-task-");
+        executor.setCorePoolSize(10);
+        executor.setMaxPoolSize(20);
+        executor.setQueueCapacity(500);
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(30);
+        executor.initialize();
+        return executor;
+    }
+
     @Bean(name = "knowledgeProcessingExecutor")
     public Executor knowledgeProcessingExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

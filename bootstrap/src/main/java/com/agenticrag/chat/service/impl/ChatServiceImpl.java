@@ -1,5 +1,6 @@
 package com.agenticrag.chat.service.impl;
 
+import com.agenticrag.chat.dto.ChatEvent;
 import com.agenticrag.chat.dto.ChatResult;
 import com.agenticrag.infra.ai.api.chat.AiChatFacade;
 import com.agenticrag.infra.ai.api.chat.ChatRequest;
@@ -129,7 +130,7 @@ public class ChatServiceImpl implements ChatService {
         AiRuntimeContext context = userAiProviderConfigService.resolveRuntimeContext(userId);
         AiChatScene chatScene = AiChatScene.fromCode(scene);
         if (isRagRequest(chatScene, kbId)) {
-            RagQueryResult result = ragFacade.query(new RagQueryRequest(message, kbId, userId, context, 5));
+            RagQueryResult result = ragFacade.query(new RagQueryRequest(message, kbId, userId, context, 5, conversationId));
             saveMessage(conversationId, userId, "assistant", result.answer(), serializeMetadata(buildRagMessageMetadata(result, scene, kbId)));
             return result.answer();
         }
@@ -149,7 +150,7 @@ public class ChatServiceImpl implements ChatService {
         AiRuntimeContext context = userAiProviderConfigService.resolveRuntimeContext(userId);
         AiChatScene chatScene = AiChatScene.fromCode(scene);
         if (isRagRequest(chatScene, kbId)) {
-            RagQueryResult result = ragFacade.query(new RagQueryRequest(message, kbId, userId, context, 5));
+            RagQueryResult result = ragFacade.query(new RagQueryRequest(message, kbId, userId, context, 5, conversationId));
             saveMessage(conversationId, userId, "assistant", result.answer(), serializeMetadata(buildRagMessageMetadata(result, scene, kbId)));
             return new ChatResult(
                     result.answer(),
@@ -180,27 +181,36 @@ public class ChatServiceImpl implements ChatService {
     }
 
     @Override
-    public Flux<String> stream(String message, String scene, String kbId, String userId, String conversationId) {
+    public Flux<ChatEvent> stream(String message, String scene, String kbId, String userId, String conversationId) {
         saveMessage(conversationId, userId, "user", message, serializeMetadata(buildUserMessageMetadata(scene, kbId)));
         AiRuntimeContext context = userAiProviderConfigService.resolveRuntimeContext(userId);
         AiChatScene chatScene = AiChatScene.fromCode(scene);
 
         if (isRagRequest(chatScene, kbId)) {
-            RagQueryResult result = ragFacade.query(new RagQueryRequest(message, kbId, userId, context, 5));
-            String metadataJson = serializeMetadata(buildRagMessageMetadata(result, scene, kbId));
-            return Flux.just(result.answer())
-                    .doOnComplete(() -> saveMessage(conversationId, userId, "assistant", result.answer(), metadataJson));
+            return ragFacade.streamQuery(new RagQueryRequest(message, kbId, userId, context, 5, conversationId))
+                    .doOnNext(event -> {
+                        if ("done".equals(event.type())) {
+                            // RAG completion handled in RagQueryService
+                        }
+                    })
+                    .onErrorResume(ex -> Flux.just(ChatEvent.error(ex.getMessage())));
         }
 
         StringBuilder fullContent = new StringBuilder();
-        return aiChatFacade.stream(new ChatRequest(
-                        chatScene,
-                        message,
-                        context,
-                        conversationId,
-                        userId))
-                .doOnNext(fullContent::append)
-                .doOnComplete(() -> saveMessage(conversationId, userId, "assistant", fullContent.toString(), null));
+        return Flux.concat(
+                aiChatFacade.stream(new ChatRequest(
+                                chatScene,
+                                message,
+                                context,
+                                conversationId,
+                                userId))
+                        .map(ChatEvent::chunk)
+                        .doOnNext(event -> fullContent.append((String) event.data()))
+                        .doOnComplete(() -> {
+                            saveMessage(conversationId, userId, "assistant", fullContent.toString(), null);
+                        }),
+                Flux.just(ChatEvent.done())
+        ).onErrorResume(ex -> Flux.just(ChatEvent.error(ex.getMessage())));
     }
 
     private boolean isRagRequest(AiChatScene scene, String kbId) {

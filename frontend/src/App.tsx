@@ -322,41 +322,30 @@ function ChatInterface() {
         await fetchSessions();
       }
 
-      if (selectedKbId) {
-        const response = await ChatAPI.queryChat(nextInput, sessionId, 'rag_qa', selectedKbId);
-        setMessages((prev) => {
-          const next = [...prev];
-          next[next.length - 1] = {
-            ...next[next.length - 1],
-            content: response.data.answer,
-            sourceType: response.data.sourceType,
-            scene: response.data.scene,
-            kbId: response.data.kbId,
-            traceId: response.data.traceId,
-            rewrittenQuery: response.data.rewrittenQuery,
-            citations: response.data.citations,
-            retrievedChunks: response.data.retrievedChunks,
-          };
-          return next;
-        });
-      } else {
-        await ChatAPI.streamChat(
-          nextInput,
-          sessionId,
-          undefined,
-          undefined,
-          (accumulatedContent) => {
-            setMessages((prev) => {
-              const next = [...prev];
-              next[next.length - 1] = {
-                ...next[next.length - 1],
-                content: accumulatedContent,
-              };
-              return next;
-            });
-          },
-        );
-      }
+      await ChatAPI.streamChat(
+        nextInput,
+        sessionId,
+        selectedKbId ? 'rag_qa' : undefined,
+        selectedKbId ?? undefined,
+        (accumulatedContent, metadata) => {
+          setMessages((prev) => {
+            const next = [...prev];
+            const lastMessage = next[next.length - 1];
+            next[next.length - 1] = {
+              ...lastMessage,
+              content: accumulatedContent,
+              sourceType: metadata?.sourceType ?? lastMessage.sourceType,
+              scene: metadata?.scene ?? lastMessage.scene,
+              kbId: metadata?.kbId ?? lastMessage.kbId,
+              traceId: metadata?.traceId ?? lastMessage.traceId,
+              rewrittenQuery: metadata?.rewrittenQuery ?? lastMessage.rewrittenQuery,
+              citations: metadata?.citations ?? lastMessage.citations,
+              retrievedChunks: metadata?.retrievedChunks ?? lastMessage.retrievedChunks,
+            };
+            return next;
+          });
+        },
+      );
 
       if (isNewSession) {
         await fetchSessions();

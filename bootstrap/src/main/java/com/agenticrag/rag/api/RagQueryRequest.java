@@ -7,6 +7,6 @@ public record RagQueryRequest(
         String knowledgeBaseId,
         String userId,
         AiRuntimeContext runtimeContext,
-        Integer topK
-) {
-}
+        Integer topK,
+        String conversationId
+) {}

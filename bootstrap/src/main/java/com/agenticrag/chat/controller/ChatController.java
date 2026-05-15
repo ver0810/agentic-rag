@@ -1,10 +1,12 @@
 package com.agenticrag.chat.controller;
 
+import com.agenticrag.chat.dto.ChatEvent;
 import com.agenticrag.chat.dto.ChatResult;
 import com.agenticrag.chat.service.ChatService;
 import com.agenticrag.user.auth.CurrentUser;
 import com.agenticrag.user.dao.entity.ConversationEntity;
 import com.agenticrag.user.dao.entity.MessageEntity;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
@@ -77,12 +79,12 @@ public class ChatController {
                 request.conversationId()));
     }
 
-    @PostMapping("/stream")
-    public Flux<String> stream(@RequestParam(name = "message") String message,
-                               @RequestParam(name = "scene", required = false) String scene,
-                               @RequestParam(name = "kbId", required = false) String kbId,
-                               @CurrentUser String userId,
-                               @RequestParam(name = "conversationId") String conversationId) {
+    @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ChatEvent> stream(@RequestParam(name = "message") String message,
+                                  @RequestParam(name = "scene", required = false) String scene,
+                                  @RequestParam(name = "kbId", required = false) String kbId,
+                                  @CurrentUser String userId,
+                                  @RequestParam(name = "conversationId") String conversationId) {
         return chatService.stream(message, scene, kbId, userId, conversationId);
     }
 
