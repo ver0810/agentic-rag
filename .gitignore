@@ -40,6 +40,9 @@ build/
 artifacts/
 
 ### Python ###
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
 doc-parser-service/.venv/
 doc-parser-service/__pycache__/
 doc-parser-service/**/__pycache__/

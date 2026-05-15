@@ -431,6 +431,7 @@ CREATE TABLE t_rag_eval_case_result
 CREATE INDEX idx_rag_eval_case_run ON t_rag_eval_case_result (eval_run_id, case_id);
 COMMENT ON TABLE t_rag_eval_case_result IS 'RAG评测样例结果表';
 
+
 -- ============================================
 -- Ingestion Pipeline Tables
 -- ============================================
@@ -528,15 +529,18 @@ CREATE TABLE t_knowledge_vector
     id        VARCHAR(20) PRIMARY KEY,
     content   TEXT,
     metadata  JSONB,
-    embedding vector
+    embedding vector,
+    tsv       TSVECTOR
 );
 
 CREATE INDEX idx_kv_metadata ON t_knowledge_vector USING gin (metadata);
+CREATE INDEX idx_kv_tsv ON t_knowledge_vector USING gin (tsv);
 COMMENT ON TABLE t_knowledge_vector IS '知识库向量存储表';
 COMMENT ON COLUMN t_knowledge_vector.id IS '分块ID';
 COMMENT ON COLUMN t_knowledge_vector.content IS '分块文本内容';
 COMMENT ON COLUMN t_knowledge_vector.metadata IS '元数据';
 COMMENT ON COLUMN t_knowledge_vector.embedding IS '向量';
+COMMENT ON COLUMN t_knowledge_vector.tsv IS '全文搜索向量(BM25)';
 
 -- ============================================
 -- Column Comments

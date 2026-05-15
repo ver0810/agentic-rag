@@ -1,10 +1,12 @@
 package com.agenticrag.knowledge.service;
 
 import com.agenticrag.infra.ai.observability.TokenCostEstimator;
+import com.agenticrag.infra.ai.port.embedding.KnowledgeEmbeddingPort;
 import com.agenticrag.rag.parser.LogicalSegment;
 import com.agenticrag.rag.parser.StructuredParseResult;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -38,10 +40,20 @@ public class DocumentChunkingService {
 
     private final ObjectMapper objectMapper;
     private final TokenCostEstimator tokenCostEstimator;
+    private final SemanticChunkingService semanticChunkingService;
 
-    public DocumentChunkingService(ObjectMapper objectMapper, TokenCostEstimator tokenCostEstimator) {
+    @Autowired
+    public DocumentChunkingService(ObjectMapper objectMapper,
+                                   TokenCostEstimator tokenCostEstimator,
+                                   SemanticChunkingService semanticChunkingService) {
         this.objectMapper = objectMapper;
         this.tokenCostEstimator = tokenCostEstimator;
+        this.semanticChunkingService = semanticChunkingService;
+    }
+
+    public DocumentChunkingService(ObjectMapper objectMapper,
+                                   TokenCostEstimator tokenCostEstimator) {
+        this(objectMapper, tokenCostEstimator, new SemanticChunkingService(unsupportedEmbeddingPort(), tokenCostEstimator));
     }
 
     public List<String> chunk(String text, String strategy, String chunkConfig) {
@@ -57,11 +69,23 @@ public class DocumentChunkingService {
         String normalizedStrategy = StringUtils.hasText(strategy) ? strategy.trim().toLowerCase() : "paragraph";
         Map<String, Object> config = parseConfig(chunkConfig);
         int maxTokens = intValue(config, "maxTokens", DEFAULT_MAX_TOKENS);
+
+        if ("semantic".equals(normalizedStrategy)) {
+            return semanticChunkingService.chunk(text, config);
+        }
+
         return switch (normalizedStrategy) {
             case "fixed" -> fixedChunksWithMeta(text,
                     intValue(config, "chunkSize", DEFAULT_FIXED_CHUNK_SIZE),
                     intValue(config, "overlap", DEFAULT_FIXED_OVERLAP),
                     maxTokens);
+            case "paper", "manual", "table" -> paragraphChunksWithMeta(text,
+                    intValue(config, "maxChars", DEFAULT_PARAGRAPH_MAX_CHARS),
+                    intValue(config, "overlapParagraphs", DEFAULT_PARAGRAPH_OVERLAP),
+                    intValue(config, "minChunkChars", DEFAULT_PARAGRAPH_MIN_CHARS),
+                    maxTokens).stream()
+                    .map(chunk -> decorateChunkStrategy(chunk, normalizedStrategy))
+                    .toList();
             case "paragraph", "smart" -> paragraphChunksWithMeta(text,
                     intValue(config, "maxChars", DEFAULT_PARAGRAPH_MAX_CHARS),
                     intValue(config, "overlapParagraphs", DEFAULT_PARAGRAPH_OVERLAP),
@@ -80,22 +104,31 @@ public class DocumentChunkingService {
             return List.of();
         }
         String normalizedStrategy = StringUtils.hasText(strategy) ? strategy.trim().toLowerCase() : "paragraph";
+        Map<String, Object> config = parseConfig(chunkConfig);
+
+        if ("semantic".equals(normalizedStrategy)) {
+            return semanticChunkingService.chunk(parseResult, config);
+        }
+
+        if (List.of("paper", "manual", "table").contains(normalizedStrategy)) {
+            return paragraphChunksWithStructuredSegments(
+                    parseResult.segments(),
+                    intValue(config, "maxChars", DEFAULT_PARAGRAPH_MAX_CHARS),
+                    intValue(config, "overlapParagraphs", DEFAULT_PARAGRAPH_OVERLAP),
+                    intValue(config, "minChunkChars", DEFAULT_PARAGRAPH_MIN_CHARS),
+                    intValue(config, "maxTokens", DEFAULT_MAX_TOKENS),
+                    normalizedStrategy);
+        }
         if (!List.of("paragraph", "smart").contains(normalizedStrategy)) {
             return chunkWithMetadata(parseResult.asPlainText(), strategy, chunkConfig);
         }
-        Map<String, Object> config = parseConfig(chunkConfig);
         return paragraphChunksWithStructuredSegments(
                 parseResult.segments(),
                 intValue(config, "maxChars", DEFAULT_PARAGRAPH_MAX_CHARS),
                 intValue(config, "overlapParagraphs", DEFAULT_PARAGRAPH_OVERLAP),
                 intValue(config, "minChunkChars", DEFAULT_PARAGRAPH_MIN_CHARS),
-                intValue(config, "maxTokens", DEFAULT_MAX_TOKENS));
-    }
-
-    private List<String> fixedChunks(String text, int chunkSize, int overlap, int maxTokens) {
-        return fixedChunksWithMeta(text, chunkSize, overlap, maxTokens).stream()
-                .map(ChunkResult::content)
-                .toList();
+                intValue(config, "maxTokens", DEFAULT_MAX_TOKENS),
+                normalizedStrategy);
     }
 
     private List<ChunkResult> fixedChunksWithMeta(String text, int chunkSize, int overlap, int maxTokens) {
@@ -111,12 +144,6 @@ public class DocumentChunkingService {
             start += safeChunkSize - safeOverlap;
         }
         return chunks;
-    }
-
-    private List<String> paragraphChunks(String text, int maxChars, int overlapParagraphs, int minChunkChars, int maxTokens) {
-        return paragraphChunksWithMeta(text, maxChars, overlapParagraphs, minChunkChars, maxTokens).stream()
-                .map(ChunkResult::content)
-                .toList();
     }
 
     private List<ChunkResult> paragraphChunksWithMeta(String text, int maxChars, int overlapParagraphs, int minChunkChars, int maxTokens) {
@@ -165,11 +192,12 @@ public class DocumentChunkingService {
                                                                     int maxChars,
                                                                     int overlapParagraphs,
                                                                     int minChunkChars,
-                                                                    int maxTokens) {
+                                                                    int maxTokens,
+                                                                    String strategy) {
         List<SegmentWithHeading> units = segments.stream()
                 .filter(segment -> StringUtils.hasText(segment.content()))
                 .filter(segment -> !"heading".equals(segment.type()))
-                .map(segment -> new SegmentWithHeading(segment.content(), segment.headingPath(), segment.metadata()))
+                .map(segment -> new SegmentWithHeading(segment.type(), segment.content(), segment.headingPath(), segment.metadata()))
                 .toList();
         if (units.isEmpty()) {
             return chunkWithMetadata(
@@ -187,6 +215,18 @@ public class DocumentChunkingService {
         int safeOverlap = Math.max(0, overlapParagraphs);
         int index = 0;
         while (index < units.size()) {
+            SegmentWithHeading firstUnit = units.get(index);
+            if (shouldIsolateSegment(firstUnit, strategy)) {
+                ChunkResult isolated = buildChunkResult(
+                        truncateToTokenLimit(firstUnit.text(), maxTokens),
+                        firstUnit.headingPath());
+                Map<String, Object> metadata = new LinkedHashMap<>(isolated.metadata());
+                mergeSegmentMetadata(metadata, firstUnit.metadata());
+                metadata.put("chunkStrategy", strategy);
+                chunks.add(new ChunkResult(isolated.content(), isolated.headingPath(), metadata));
+                index++;
+                continue;
+            }
             StringBuilder current = new StringBuilder();
             String headingPath = null;
             Integer headingLevel = null;
@@ -194,11 +234,17 @@ public class DocumentChunkingService {
             int endExclusive = index;
             while (endExclusive < units.size()) {
                 SegmentWithHeading unit = units.get(endExclusive);
+                if (!current.isEmpty() && shouldIsolateSegment(unit, strategy)) {
+                    break;
+                }
                 if (!current.isEmpty()
                         && StringUtils.hasText(headingPath)
                         && StringUtils.hasText(unit.headingPath)
                         && !headingPath.equals(unit.headingPath)
                         && current.length() >= minChunkChars) {
+                    break;
+                }
+                if (shouldBreakForStrategy(strategy, headingPath, unit, current.length(), minChunkChars)) {
                     break;
                 }
                 int nextLength = current.isEmpty() ? unit.text.length() : current.length() + 2 + unit.text.length();
@@ -231,6 +277,7 @@ public class DocumentChunkingService {
                 if (headingLevel != null) {
                     metadata.put("headingLevel", headingLevel);
                 }
+                metadata.put("chunkStrategy", strategy);
                 chunks.add(new ChunkResult(base.content(), headingPath, metadata));
             }
             if (endExclusive >= units.size()) {
@@ -239,12 +286,6 @@ public class DocumentChunkingService {
             index = Math.max(index + 1, endExclusive - safeOverlap);
         }
         return chunks;
-    }
-
-    private List<String> recursiveChunks(String text, int maxChars, int overlap, int maxTokens) {
-        return recursiveChunksWithMeta(text, maxChars, overlap, maxTokens).stream()
-                .map(ChunkResult::content)
-                .toList();
     }
 
     private List<ChunkResult> recursiveChunksWithMeta(String text, int maxChars, int overlap, int maxTokens) {
@@ -303,17 +344,59 @@ public class DocumentChunkingService {
         return new ChunkResult(content, headingPath, inferChunkMetadata(content, headingPath));
     }
 
+    private ChunkResult decorateChunkStrategy(ChunkResult chunk, String strategy) {
+        Map<String, Object> metadata = new LinkedHashMap<>(chunk.metadata());
+        metadata.put("chunkStrategy", strategy);
+        return new ChunkResult(chunk.content(), chunk.headingPath(), metadata);
+    }
+
     private void mergeSegmentMetadata(Map<String, Object> target, Map<String, Object> source) {
         if (source == null || source.isEmpty()) {
             return;
         }
         source.forEach((key, value) -> {
+            if ("segmentType".equals(key) && value instanceof String text && StringUtils.hasText(text)) {
+                target.put(key, text);
+                return;
+            }
             if (value instanceof Boolean boolValue && Boolean.TRUE.equals(boolValue)) {
                 target.put(key, true);
             } else if (!target.containsKey(key) && value != null) {
                 target.put(key, value);
             }
         });
+    }
+
+    private boolean shouldBreakForStrategy(String strategy,
+                                           String currentHeadingPath,
+                                           SegmentWithHeading unit,
+                                           int currentLength,
+                                           int minChunkChars) {
+        if (!StringUtils.hasText(strategy) || currentLength < minChunkChars) {
+            return false;
+        }
+        if ("manual".equals(strategy)) {
+            return StringUtils.hasText(currentHeadingPath)
+                    && StringUtils.hasText(unit.headingPath())
+                    && !currentHeadingPath.equals(unit.headingPath());
+        }
+        if ("paper".equals(strategy)) {
+            return ("caption".equals(unit.type()) || "table".equals(unit.type()) || "figure".equals(unit.type()))
+                    || (StringUtils.hasText(currentHeadingPath)
+                    && StringUtils.hasText(unit.headingPath())
+                    && !currentHeadingPath.equals(unit.headingPath()));
+        }
+        return false;
+    }
+
+    private boolean shouldIsolateSegment(SegmentWithHeading unit, String strategy) {
+        if (unit == null) {
+            return false;
+        }
+        if ("table".equals(strategy)) {
+            return "table".equals(unit.type()) || "caption".equals(unit.type());
+        }
+        return false;
     }
 
     private Map<String, Object> inferChunkMetadata(String content, String headingPath) {
@@ -378,12 +461,6 @@ public class DocumentChunkingService {
         return tokenCostEstimator.estimateTokens(text);
     }
 
-    private List<String> normalizeParagraphs(String text) {
-        return normalizeParagraphsWithHeadings(text).stream()
-                .map(p -> p.heading != null ? p.heading + "\n" + p.text : p.text)
-                .toList();
-    }
-
     private List<ParagraphWithHeading> normalizeParagraphsWithHeadings(String text) {
         String[] blocks = text.replace("\r\n", "\n").split("\\n\\s*\\n+");
         List<ParagraphWithHeading> paragraphs = new ArrayList<>();
@@ -407,7 +484,7 @@ public class DocumentChunkingService {
 
     private record ParagraphWithHeading(String text, String heading) {}
 
-    private record SegmentWithHeading(String text, String headingPath, Map<String, Object> metadata) {}
+    private record SegmentWithHeading(String type, String text, String headingPath, Map<String, Object> metadata) {}
 
     private boolean isHeading(String block) {
         return block.length() <= 80 && HEADING_PATTERN.matcher(block).matches();
@@ -437,5 +514,19 @@ public class DocumentChunkingService {
             }
         }
         return defaultValue;
+    }
+
+    private static KnowledgeEmbeddingPort unsupportedEmbeddingPort() {
+        return new KnowledgeEmbeddingPort() {
+            @Override
+            public float[] embed(String text) {
+                throw new UnsupportedOperationException("Semantic chunking is unavailable in this context");
+            }
+
+            @Override
+            public List<float[]> embedAll(List<String> texts) {
+                throw new UnsupportedOperationException("Semantic chunking is unavailable in this context");
+            }
+        };
     }
 }

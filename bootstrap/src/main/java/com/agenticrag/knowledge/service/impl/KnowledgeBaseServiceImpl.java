@@ -20,6 +20,8 @@ import com.agenticrag.knowledge.dao.mapper.KnowledgeDocumentMapper;
 import com.agenticrag.knowledge.service.DocumentChunkingService;
 import com.agenticrag.knowledge.service.ChunkResult;
 import com.agenticrag.knowledge.service.KnowledgeBaseService;
+import com.agenticrag.knowledge.dto.DocumentChunkPreviewDTO;
+import com.agenticrag.knowledge.dto.DocumentStructurePreviewDTO;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import lombok.extern.slf4j.Slf4j;
@@ -40,8 +42,10 @@ import java.util.Map;
 @Service
 public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
-    private static final int CHUNK_SIZE = 500;
-    private static final int CHUNK_OVERLAP = 50;
+    private static final int DEFAULT_PREVIEW_MAX_SEGMENTS = 80;
+    private static final int DEFAULT_PREVIEW_MAX_PAGES = 10;
+    private static final int DEFAULT_PREVIEW_MAX_CHUNKS = 20;
+    private static final int MAX_PREVIEW_CONTENT_CHARS = 600;
 
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final KnowledgeDocumentMapper knowledgeDocumentMapper;
@@ -210,9 +214,9 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             StructuredParseResult parseResult;
             try (InputStream fileStream = documentStoragePort.load(doc.getFileUrl())) {
                 log.info("File loaded successfully");
-                var parser = documentParserFactory.getParser(doc.getFileType());
+                var parser = documentParserFactory.getParser(doc.getFileType(), doc.getChunkStrategy());
                 log.info("Parser found: {}", parser.getClass().getSimpleName());
-                parseResult = parser.parseStructured(fileStream, doc.getFileType());
+                parseResult = parser.parseStructured(fileStream, doc.getFileType(), doc.getChunkStrategy());
             }
             processLog.setExtractDuration(toMillis(extractStart));
             log.info("Document parsed, segment count: {}, content length: {}",
@@ -230,36 +234,9 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             }
 
             long embedStart = System.nanoTime();
-            Map<String, String> existingHashMap = loadExistingChunkHashes(docId);
-            List<float[]> embeddings = new ArrayList<>();
-            int reusedCount = 0;
-            List<String> chunksToEmbed = new ArrayList<>();
-            List<Integer> chunksToEmbedIndex = new ArrayList<>();
-
-            for (int i = 0; i < chunks.size(); i++) {
-                String hash = calculateHash(chunks.get(i));
-                String existingChunkId = existingHashMap.get(hash);
-                if (existingChunkId != null) {
-                    KnowledgeChunkEntity existing = knowledgeChunkMapper.selectById(existingChunkId);
-                    if (existing != null && existing.getDeleted() == 0) {
-                        embeddings.add(null);
-                        reusedCount++;
-                        continue;
-                    }
-                }
-                chunksToEmbed.add(chunks.get(i));
-                chunksToEmbedIndex.add(i);
-                embeddings.add(null);
-            }
-
-            if (!chunksToEmbed.isEmpty()) {
-                List<float[]> newEmbeddings = knowledgeEmbeddingPort.embedAll(new ArrayList<>(chunksToEmbed));
-                for (int j = 0; j < newEmbeddings.size(); j++) {
-                    embeddings.set(chunksToEmbedIndex.get(j), newEmbeddings.get(j));
-                }
-            }
+            List<float[]> embeddings = knowledgeEmbeddingPort.embedAll(new ArrayList<>(chunks));
             processLog.setEmbedDuration(toMillis(embedStart));
-            log.info("Embedding completed: {} new, {} reused", chunksToEmbed.size(), reusedCount);
+            log.info("Embedding completed: {} chunks", embeddings.size());
 
             long persistStart = System.nanoTime();
             knowledgeChunkMapper.delete(
@@ -314,6 +291,63 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         return doc == null ? 0 : doc.getChunkCount();
     }
 
+    @Override
+    public DocumentStructurePreviewDTO previewDocumentStructure(String docId,
+                                                                String userId,
+                                                                String strategy,
+                                                                Integer maxSegments,
+                                                                Integer maxPages,
+                                                                Integer maxChunks) {
+        KnowledgeDocumentEntity doc = requireDocument(docId, userId);
+        String effectiveStrategy = StringUtils.hasText(strategy) ? strategy.trim() : doc.getChunkStrategy();
+        if (!StringUtils.hasText(effectiveStrategy)) {
+            effectiveStrategy = "paragraph";
+        }
+
+        StructuredParseResult parseResult;
+        try (InputStream fileStream = documentStoragePort.load(doc.getFileUrl())) {
+            var parser = documentParserFactory.getParser(doc.getFileType(), effectiveStrategy);
+            parseResult = parser.parseStructured(fileStream, doc.getFileType(), effectiveStrategy);
+        } catch (Exception e) {
+            throw new RuntimeException("Document structure preview failed: " + e.getMessage(), e);
+        }
+
+        List<ChunkResult> chunkResults = documentChunkingService.chunkWithMetadata(
+                parseResult,
+                effectiveStrategy,
+                doc.getChunkConfig());
+
+        int safeMaxSegments = sanitizePreviewSize(maxSegments, DEFAULT_PREVIEW_MAX_SEGMENTS, 200);
+        int safeMaxPages = sanitizePreviewSize(maxPages, DEFAULT_PREVIEW_MAX_PAGES, 50);
+        int safeMaxChunks = sanitizePreviewSize(maxChunks, DEFAULT_PREVIEW_MAX_CHUNKS, 100);
+
+        Map<String, Object> metadata = new LinkedHashMap<>(parseResult.documentMetadata() == null ? Map.of() : parseResult.documentMetadata());
+        metadata.put("previewTotalSegments", parseResult.segments().size());
+        metadata.put("previewTotalPages", parseResult.pages().size());
+        metadata.put("previewTotalChunks", chunkResults.size());
+
+        List<DocumentChunkPreviewDTO> chunkPreviews = new ArrayList<>();
+        for (int i = 0; i < Math.min(chunkResults.size(), safeMaxChunks); i++) {
+            ChunkResult chunk = chunkResults.get(i);
+            chunkPreviews.add(new DocumentChunkPreviewDTO(
+                    i,
+                    abbreviatePreviewContent(chunk.content()),
+                    chunk.headingPath(),
+                    chunk.metadata() == null ? Map.of() : chunk.metadata()));
+        }
+
+        return new DocumentStructurePreviewDTO(
+                doc.getId(),
+                doc.getDocName(),
+                doc.getFileType(),
+                effectiveStrategy,
+                doc.getChunkStrategy(),
+                metadata,
+                parseResult.pages().stream().limit(safeMaxPages).toList(),
+                parseResult.segments().stream().limit(safeMaxSegments).toList(),
+                chunkPreviews);
+    }
+
     private String calculateHash(String content) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -354,21 +388,6 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             metadata.putAll(chunkResult.metadata());
         }
         return metadata;
-    }
-
-    private Map<String, String> loadExistingChunkHashes(String docId) {
-        Map<String, String> hashMap = new LinkedHashMap<>();
-        List<KnowledgeChunkEntity> existingChunks = knowledgeChunkMapper.selectList(
-                new LambdaQueryWrapper<KnowledgeChunkEntity>()
-                        .eq(KnowledgeChunkEntity::getDocId, docId)
-                        .eq(KnowledgeChunkEntity::getDeleted, 0)
-                        .select(KnowledgeChunkEntity::getId, KnowledgeChunkEntity::getContentHash));
-        for (KnowledgeChunkEntity chunk : existingChunks) {
-            if (chunk.getContentHash() != null) {
-                hashMap.put(chunk.getContentHash(), chunk.getId());
-            }
-        }
-        return hashMap;
     }
 
     private KnowledgeBaseEntity requireKnowledgeBase(String kbId, String userId) {
@@ -439,5 +458,21 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
     private String normalizeStatus(String status) {
         return status == null ? "" : status.trim().toLowerCase();
+    }
+
+    private int sanitizePreviewSize(Integer requested, int defaultValue, int hardLimit) {
+        if (requested == null) {
+            return defaultValue;
+        }
+        return Math.max(1, Math.min(requested, hardLimit));
+    }
+
+    private String abbreviatePreviewContent(String content) {
+        if (!StringUtils.hasText(content)) {
+            return content;
+        }
+        return content.length() > MAX_PREVIEW_CONTENT_CHARS
+                ? content.substring(0, MAX_PREVIEW_CONTENT_CHARS) + "..."
+                : content;
     }
 }
