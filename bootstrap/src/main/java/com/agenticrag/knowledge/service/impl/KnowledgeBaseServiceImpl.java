@@ -1,6 +1,7 @@
 package com.agenticrag.knowledge.service.impl;
 
 import com.agenticrag.common.ApiException;
+import com.agenticrag.framework.infrastructure.mq.EventPublisherPort;
 import com.agenticrag.knowledge.service.IngestionTaskService;
 import com.agenticrag.infra.ai.config.EmbeddingProperties;
 import com.agenticrag.infra.ai.observability.TokenCostEstimator;
@@ -28,6 +29,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 
 import java.io.InputStream;
@@ -59,6 +62,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     private final DocumentChunkingService documentChunkingService;
     private final IngestionTaskService ingestionTaskService;
     private final TokenCostEstimator tokenCostEstimator;
+    private final EventPublisherPort eventPublisher;
 
     public KnowledgeBaseServiceImpl(KnowledgeBaseMapper knowledgeBaseMapper,
                                     KnowledgeDocumentMapper knowledgeDocumentMapper,
@@ -71,7 +75,8 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
                                     EmbeddingProperties embeddingProperties,
                                     DocumentChunkingService documentChunkingService,
                                     IngestionTaskService ingestionTaskService,
-                                    TokenCostEstimator tokenCostEstimator) {
+                                    TokenCostEstimator tokenCostEstimator,
+                                    EventPublisherPort eventPublisher) {
         this.knowledgeBaseMapper = knowledgeBaseMapper;
         this.knowledgeDocumentMapper = knowledgeDocumentMapper;
         this.knowledgeDocumentChunkLogMapper = knowledgeDocumentChunkLogMapper;
@@ -84,6 +89,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         this.documentChunkingService = documentChunkingService;
         this.ingestionTaskService = ingestionTaskService;
         this.tokenCostEstimator = tokenCostEstimator;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
@@ -190,7 +196,14 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         doc.setStatus("queued");
         doc.setUpdateTime(LocalDateTime.now());
         knowledgeDocumentMapper.updateById(doc);
-        return ingestionTaskService.enqueueDocumentTask(doc, userId);
+        String taskId = ingestionTaskService.enqueueDocumentTask(doc, userId);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                eventPublisher.publishIngestionEvent(docId, taskId, userId);
+            }
+        });
+        return taskId;
     }
 
     @Override

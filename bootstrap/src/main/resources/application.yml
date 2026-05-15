@@ -8,13 +8,12 @@ spring:
       max-request-size: ${MULTIPART_MAX_REQUEST_SIZE:60MB}
 
   datasource:
-    url: ${DB_URL}
-    username: ${DB_USERNAME}
-    password: ${DB_PASSWORD}
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/agenticrag}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
 
   # Spring AI 框架默认配置（用于自动配置 OpenAiChatModel Bean）
-  # 注意：此配置用于 Spring AI 框架自动配置，与 agenticrag.ai.providers.openai 配置相同
   ai:
     openai:
       base-url: ${BASE_URL}
@@ -23,6 +22,28 @@ spring:
         options:
           model: deepseek-chat
           stream-usage: false
+
+  # Redis 配置
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: ${REDIS_TIMEOUT:3000}
+      lettuce:
+        pool:
+          enabled: true
+          max-active: ${REDIS_POOL_MAX_ACTIVE:16}
+          max-idle: ${REDIS_POOL_MAX_IDLE:8}
+          min-idle: ${REDIS_POOL_MIN_IDLE:4}
+          max-wait: ${REDIS_POOL_MAX_WAIT:1000}
+
+# RocketMQ 配置
+rocketmq:
+  name-server: ${ROCKETMQ_NAMESRV:localhost:9876}
+  producer:
+    group: ${ROCKETMQ_PRODUCER_GROUP:agenticrag-producer}
 
 agenticrag:
   parser:
@@ -71,7 +92,7 @@ agenticrag:
           system-prompt: 你是一个严格基于检索上下文回答问题的知识库助手。如果证据不足，要明确说明。
         evaluation:
           temperature: 0.0
-          max-tokens: 256
+          max-tokens: 2048
           system-prompt: 你是一个严格的 RAG 评测裁判。只根据输入内容打分，输出简洁、稳定、可解析。
         summary:
           temperature: 0.3
@@ -111,9 +132,27 @@ agenticrag:
         webhook-url: ${RAG_ALERT_WEBHOOK_URL:}
         dispatch-interval-ms: 300000
 
+    # 限流配置
+    rate-limit:
+      enabled: ${RATE_LIMIT_ENABLED:true}
+      default-capacity: ${RATE_LIMIT_DEFAULT_CAPACITY:60}
+      default-refill-per-minute: ${RATE_LIMIT_DEFAULT_REFILL:30}
+
+    # MQ 事件配置
+    event:
+      ingestion:
+        topic: ${EVENT_INGESTION_TOPIC:rag-ingestion-topic}
+        consumer-group: ${EVENT_INGESTION_CG:rag-ingestion-cg}
+      evaluation:
+        topic: ${EVENT_EVALUATION_TOPIC:rag-evaluation-topic}
+        consumer-group: ${EVENT_EVALUATION_CG:rag-evaluation-cg}
+    ingestion:
+      poll-delay-ms: ${INGESTION_POLL_DELAY_MS:3000}
+
 server:
   servlet:
     encoding:
       enabled: true
       charset: UTF-8
       force: true
+  port: 8080

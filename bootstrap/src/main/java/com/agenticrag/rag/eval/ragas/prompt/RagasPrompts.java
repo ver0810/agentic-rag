@@ -19,10 +19,13 @@ public final class RagasPrompts {
 
             答案：%s
 
-            请按以下格式回答：
-            判断：[是/否]
-            原因：[简要说明理由]
-            分数：[0.0-1.0]
+            请只输出 JSON，包含以下字段：
+            - "isFaithful": 布尔值，true 表示忠实，false 表示不忠实
+            - "reason": 字符串，简要说明理由
+            - "score": 浮点数，0.0-1.0 之间的忠实度评分
+
+            输出示例：
+            {"isFaithful": true, "reason": "所有声明均有上下文支持", "score": 1.0}
             """;
 
     public static final String CONTEXT_RECALL_PROMPT = """
@@ -40,10 +43,13 @@ public final class RagasPrompts {
 
             标准答案：%s
 
-            请按以下格式回答：
-            覆盖的关键点：[列出被上下文覆盖的要点]
-            未覆盖的关键点：[列出未被覆盖的要点]
-            分数：[0.0-1.0]
+            请只输出 JSON，包含以下字段：
+            - "coveredPoints": 字符串数组，列出被上下文覆盖的要点
+            - "uncoveredPoints": 字符串数组，列出未被覆盖的要点
+            - "score": 浮点数，0.0-1.0 之间的召回率评分
+
+            输出示例：
+            {"coveredPoints": ["要点1", "要点2"], "uncoveredPoints": [], "score": 1.0}
             """;
 
     public static final String CONTEXT_PRECISION_PROMPT = """
@@ -61,10 +67,13 @@ public final class RagasPrompts {
 
             标准答案：%s
 
-            请按以下格式回答：
-            相关片段编号：[列出相关的片段编号]
-            不相关片段编号：[列出不相关的片段编号]
-            分数：[0.0-1.0]
+            请只输出 JSON，包含以下字段：
+            - "relevantChunkIds": 整数数组，列出相关的片段编号
+            - "irrelevantChunkIds": 整数数组，列出不相关的片段编号
+            - "score": 浮点数，0.0-1.0 之间的精确度评分
+
+            输出示例：
+            {"relevantChunkIds": [1, 2, 4], "irrelevantChunkIds": [3, 5], "score": 0.8}
             """;
 
     public static final String ANSWER_RELEVANCY_PROMPT = """
@@ -79,10 +88,13 @@ public final class RagasPrompts {
 
             生成的答案：%s
 
-            请按以下格式回答：
-            是否回答了问题：[是/部分/否]
-            相关性评价：[简要说明]
-            分数：[0.0-1.0]
+            请只输出 JSON，包含以下字段：
+            - "answered": 布尔值或字符串，true 表示已回答，false 表示未回答，"partial" 表示部分回答
+            - "evaluation": 字符串，相关性简要评价
+            - "score": 浮点数，0.0-1.0 之间的相关性评分
+
+            输出示例：
+            {"answered": true, "evaluation": "答案直接回应了问题", "score": 1.0}
             """;
 
     public static final String ANSWER_CORRECTNESS_PROMPT = """
@@ -99,10 +111,13 @@ public final class RagasPrompts {
 
             标准答案：%s
 
-            请按以下格式回答：
-            一致的事实：[列出一致的要点]
-            不一致的事实：[列出不一致的要点]
-            遗漏的事实：[列出遗漏的要点]
-            分数：[0.0-1.0]
+            请只输出 JSON，包含以下字段：
+            - "consistentFacts": 字符串数组，列出一致的要点
+            - "inconsistentFacts": 字符串数组，列出不一致的要点
+            - "missingFacts": 字符串数组，列出遗漏的要点
+            - "score": 浮点数，0.0-1.0 之间的正确性评分
+
+            输出示例：
+            {"consistentFacts": ["事实1"], "inconsistentFacts": [], "missingFacts": ["事实2"], "score": 0.8}
             """;
 }

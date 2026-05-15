@@ -17,6 +17,7 @@ import java.util.regex.Pattern;
 public class ContextPrecisionMetric {
 
     private static final Pattern SCORE_PATTERN = Pattern.compile("分数[：:][\\s]*([0-9.]+)");
+    private static final Pattern JSON_SCORE_PATTERN = Pattern.compile("\"score\"\\s*:\\s*([0-9.]+)");
     private final AiChatService aiChatService;
 
     public ContextPrecisionMetric(AiChatService aiChatService) {
@@ -57,6 +58,15 @@ public class ContextPrecisionMetric {
         if (!StringUtils.hasText(response)) {
             return -1.0;
         }
+        // Try JSON format first
+        Matcher jsonMatcher = JSON_SCORE_PATTERN.matcher(response);
+        if (jsonMatcher.find()) {
+            try {
+                double score = Double.parseDouble(jsonMatcher.group(1));
+                return Math.max(0.0, Math.min(1.0, score));
+            } catch (NumberFormatException ignored) {}
+        }
+        // Fall back to legacy Chinese format
         Matcher matcher = SCORE_PATTERN.matcher(response);
         if (matcher.find()) {
             try {

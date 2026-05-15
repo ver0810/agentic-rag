@@ -5,6 +5,7 @@ import com.agenticrag.knowledge.dao.entity.KnowledgeDocumentChunkLogEntity;
 import com.agenticrag.knowledge.dao.mapper.KnowledgeDocumentChunkLogMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.env.Environment;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -23,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Component
+@ConditionalOnProperty(name = "agenticrag.ingestion.poll-enabled", havingValue = "true", matchIfMissing = true)
 public class DocumentIngestionWorker {
 
     private final IngestionTaskService ingestionTaskService;
@@ -45,7 +47,7 @@ public class DocumentIngestionWorker {
         this.workerId = buildWorkerId();
     }
 
-    @Scheduled(fixedDelayString = "${agenticrag.ingestion.poll-delay-ms:3000}")
+    @Scheduled(fixedDelayString = "${agenticrag.ingestion.poll-delay-ms:30000}")
     public void pollAndProcess() {
         String datasourceUrl;
         try {

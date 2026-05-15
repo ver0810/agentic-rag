@@ -6,6 +6,7 @@ import com.agenticrag.knowledge.service.ChunkResult;
 import com.agenticrag.knowledge.service.DocumentChunkingService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
@@ -156,7 +157,9 @@ class DocumentParserStructureTests {
     @Test
     void parserFactoryShouldAcceptExtensionAndStrategyRouting() {
         MarkdownDocumentParser markdownParser = new MarkdownDocumentParser();
-        DocumentParserFactory factory = new DocumentParserFactory(List.of(markdownParser));
+        PythonDocumentParser pythonParser = Mockito.mock(PythonDocumentParser.class);
+        Mockito.when(pythonParser.isHealthy()).thenReturn(false);
+        DocumentParserFactory factory = new DocumentParserFactory(List.of(markdownParser), pythonParser);
 
         DocumentParser parser = factory.getParser("md", "manual");
 
