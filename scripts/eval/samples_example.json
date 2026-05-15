@@ -1,0 +1,12 @@
+[
+  {
+    "id": "q1",
+    "question": "What are the global implications of the USA Supreme Court ruling on abortion?",
+    "groundTruth": "The global implications of the USA Supreme Court ruling on abortion are significant. The ruling has led to limited or no access to abortion for one in three women and girls of reproductive age in states where abortion access is restricted."
+  },
+  {
+    "id": "q2",
+    "question": "Which companies are the main contributors to GHG emissions according to the Carbon Majors database?",
+    "groundTruth": "According to the Carbon Majors database, 100 existing fossil fuel companies are responsible for 71% of all GHG emissions since 1988."
+  }
+]

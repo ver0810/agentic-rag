@@ -25,7 +25,42 @@ python scripts/eval/convert_dureader.py \
 
 生成后的文件可直接配合：
 - `POST /api/rag/evals/run`
-- `scripts/run-rag-eval.ps1`
+- `python scripts/eval/run_rag_eval.py`
+
+### 规范化真实评测集
+
+如果你已经有一份真实评测集，但里面的 `expectedDocNames` 还没有和知识库中的实际文档名对齐，可以先做一次规范化：
+
+```bash
+python scripts/eval/build_real_eval_dataset.py \
+  --input artifacts/ragas-eval/amnesty_qa-20260511-140403.json \
+  --output bootstrap/src/main/resources/rag-eval/amnesty_qa_real.json \
+  --doc-name amnesty_qa-corpus-20260511-140353.txt \
+  --dataset-name amnesty_qa_real \
+  --limit 20
+```
+
+### 运行评测
+
+```bash
+python scripts/eval/run_rag_eval.py \
+  --base-url http://localhost:8080 \
+  --dataset sample-template \
+  --kb-id your-kb-id \
+  --username admin \
+  --password 123456
+```
+
+### 对比两次评测
+
+```bash
+python scripts/eval/compare_rag_eval.py \
+  --base-url http://localhost:8080 \
+  --base-run-id run-a \
+  --target-run-id run-b \
+  --username admin \
+  --password 123456
+```
 
 ### 导出可入库语料
 

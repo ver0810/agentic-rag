@@ -21,7 +21,7 @@ spring:
       api-key: ${API_KEY}
       chat:
         options:
-          model: deepseek-v4-flash
+          model: deepseek-chat
           stream-usage: false
 
 agenticrag:
@@ -70,7 +70,6 @@ agenticrag:
           temperature: 0.2
           system-prompt: 你是一个严格基于检索上下文回答问题的知识库助手。如果证据不足，要明确说明。
         evaluation:
-          model: ${EVALUATION_CHAT_MODEL:${OPENAI_CHAT_MODEL:deepseek-v4-flash}}
           temperature: 0.0
           max-tokens: 256
           system-prompt: 你是一个严格的 RAG 评测裁判。只根据输入内容打分，输出简洁、稳定、可解析。
