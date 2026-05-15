@@ -16,6 +16,7 @@ public class RagProperties {
     private boolean rewriteEnabled = true;
     private boolean multiQueryEnabled = false;
     private int multiQueryCount = 3;
+    private boolean parallelRetrievalEnabled = true;
     private boolean rerankEnabled = true;
     private String rerankerType = "lexical";
     private String rerankerApiUrl;
@@ -23,6 +24,11 @@ public class RagProperties {
     private String rerankerModel;
     private double rerankerRetrievalWeight = 0.8d;
     private double rerankerLexicalWeight = 0.2d;
+    private double rerankThreshold = 0.0d;
+    private boolean contextExpansionEnabled = false;
+    private String contextExpansionMode = "window"; // window, parent
+    private int contextWindowSize = 1;
+    private boolean selfRagEnabled = false;
     private int maxContextChunks = 6;
     private String promptTemplate;
 
@@ -114,6 +120,14 @@ public class RagProperties {
         this.multiQueryCount = multiQueryCount;
     }
 
+    public boolean isParallelRetrievalEnabled() {
+        return parallelRetrievalEnabled;
+    }
+
+    public void setParallelRetrievalEnabled(boolean parallelRetrievalEnabled) {
+        this.parallelRetrievalEnabled = parallelRetrievalEnabled;
+    }
+
     public boolean isRerankEnabled() {
         return rerankEnabled;
     }
@@ -168,6 +182,46 @@ public class RagProperties {
 
     public void setRerankerLexicalWeight(double rerankerLexicalWeight) {
         this.rerankerLexicalWeight = rerankerLexicalWeight;
+    }
+
+    public double getRerankThreshold() {
+        return rerankThreshold;
+    }
+
+    public void setRerankThreshold(double rerankThreshold) {
+        this.rerankThreshold = rerankThreshold;
+    }
+
+    public boolean isContextExpansionEnabled() {
+        return contextExpansionEnabled;
+    }
+
+    public void setContextExpansionEnabled(boolean contextExpansionEnabled) {
+        this.contextExpansionEnabled = contextExpansionEnabled;
+    }
+
+    public String getContextExpansionMode() {
+        return contextExpansionMode;
+    }
+
+    public void setContextExpansionMode(String contextExpansionMode) {
+        this.contextExpansionMode = contextExpansionMode;
+    }
+
+    public int getContextWindowSize() {
+        return contextWindowSize;
+    }
+
+    public void setContextWindowSize(int contextWindowSize) {
+        this.contextWindowSize = contextWindowSize;
+    }
+
+    public boolean isSelfRagEnabled() {
+        return selfRagEnabled;
+    }
+
+    public void setSelfRagEnabled(boolean selfRagEnabled) {
+        this.selfRagEnabled = selfRagEnabled;
     }
 
     public int getMaxContextChunks() {

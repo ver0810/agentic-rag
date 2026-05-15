@@ -189,6 +189,7 @@ public class ChatServiceImpl implements ChatService {
         if (isRagRequest(chatScene, kbId)) {
             StringBuilder fullAnswer = new StringBuilder();
             java.util.concurrent.atomic.AtomicReference<ChatResult> metadataRef = new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.atomic.AtomicReference<Object> verificationRef = new java.util.concurrent.atomic.AtomicReference<>();
             
             return ragFacade.streamQuery(new RagQueryRequest(message, kbId, userId, context, 5, conversationId))
                     .doOnNext(event -> {
@@ -196,6 +197,8 @@ public class ChatServiceImpl implements ChatService {
                             metadataRef.set((ChatResult) event.data());
                         } else if ("chunk".equals(event.type())) {
                             fullAnswer.append((String) event.data());
+                        } else if ("verification".equals(event.type())) {
+                            verificationRef.set(event.data());
                         } else if ("done".equals(event.type())) {
                             ChatResult result = metadataRef.get();
                             if (result != null) {
@@ -208,6 +211,9 @@ public class ChatServiceImpl implements ChatService {
                                 metadataMap.put("rewrittenQuery", result.rewrittenQuery());
                                 metadataMap.put("citations", result.citations());
                                 metadataMap.put("retrievedChunks", result.retrievedChunks());
+                                if (verificationRef.get() != null) {
+                                    metadataMap.put("verification", verificationRef.get());
+                                }
                                 saveMessage(conversationId, userId, "assistant", fullAnswer.toString(), serializeMetadata(metadataMap));
                             }
                         }

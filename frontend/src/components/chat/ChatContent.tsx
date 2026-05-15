@@ -1,19 +1,19 @@
-import { Bot, Bug, Copy, Mail, Map, Search, ThumbsDown, ThumbsUp, User } from 'lucide-react';
+import { AlertCircle, Bot, Bug, CheckCircle2, Copy, FileText, Mail, Map, Search, ThumbsDown, ThumbsUp, User } from 'lucide-react';
 import type { RefObject } from 'react';
 import MessageContent from '../MessageContent';
 import type { Message } from '../../api/chat';
-import type { KnowledgeBase } from '../../api/knowledge';
+import type { RagCitation } from '../../api/knowledge';
 
 interface ChatContentProps {
   isLoadingMessages: boolean;
   messages: Message[];
   isLoading: boolean;
   messagesEndRef: RefObject<HTMLDivElement | null>;
-  knowledgeBases: KnowledgeBase[];
   highlightedTraceId?: string | null;
   feedbackRatings?: Record<string, number>;
   isSubmittingFeedback?: boolean;
   onTraceClick?: (traceId: string) => void;
+  onCitationClick?: (citations: RagCitation[]) => void;
   onSubmitFeedback?: (payload: {
     traceId: string;
     kbId?: string;
@@ -36,17 +36,14 @@ export default function ChatContent({
   messages,
   isLoading,
   messagesEndRef,
-  knowledgeBases,
   highlightedTraceId,
   feedbackRatings,
   isSubmittingFeedback,
   onTraceClick,
+  onCitationClick,
   onSubmitFeedback,
   onSuggestionClick,
 }: ChatContentProps) {
-  const resolveKbName = (kbId?: string) =>
-    kbId ? knowledgeBases.find((kb) => kb.id === kbId)?.name ?? kbId : null;
-
   return (
     <div className="max-w-3xl mx-auto px-4 w-full">
       {isLoadingMessages ? (
@@ -114,95 +111,62 @@ export default function ChatContent({
                 )}
                 </div>
 
-                {(message.sourceType === 'rag' || message.traceId || message.kbId) ? (
+                {message.traceId ? (
                   <div className="flex flex-wrap gap-2 mt-1 px-1">
-                    {message.sourceType === 'rag' ? (
-                      <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
-                        RAG
-                      </span>
-                    ) : null}
-                    {message.kbId ? (
-                      <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] text-gray-600">
-                        KB: {resolveKbName(message.kbId)}
-                      </span>
-                    ) : null}
-                    {message.traceId ? (
-                      <button
-                        type="button"
-                        onClick={() => onTraceClick?.(message.traceId!)}
-                        className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700 transition-colors hover:bg-emerald-100"
-                      >
-                        Trace: {message.traceId.slice(0, 8)}
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
+                    <button
+                      type="button"
+                      onClick={() => onTraceClick?.(message.traceId!)}
+                      className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700 transition-colors hover:bg-emerald-100"
+                    >
+                      Trace: {message.traceId.slice(0, 8)}
+                    </button>
 
-                {message.role === 'assistant' && message.rewrittenQuery ? (
-                  <div className="w-full mt-1 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-                    <div className="text-[11px] font-medium text-amber-700 uppercase tracking-wide mb-1">
-                      Rewritten Query
-                    </div>
-                    <div className="text-xs text-amber-900">{message.rewrittenQuery}</div>
-                  </div>
-                ) : null}
-
-                {message.role === 'assistant' && !isLoading && ((message.citations?.length ?? 0) > 0 || (message.retrievedChunks?.length ?? 0) > 0) ? (
-                  <div className="w-full mt-2 space-y-2">
-                    {(message.citations?.length ?? 0) > 0 ? (
-                      <div className="rounded-xl border border-gray-200 bg-[#fafafa] px-3 py-2">
-                        <div className="text-[11px] font-medium text-gray-500 mb-2 uppercase tracking-wide">Citations</div>
-                        <div className="space-y-2">
-                          {message.citations?.slice(0, 4).map((citation) => (
-                            <div key={citation.chunkId} className="text-xs text-gray-600">
-                              <div className="flex flex-wrap gap-2 items-center mb-1">
-                                <span className="font-medium text-gray-800">{citation.docName || 'Unknown Document'}</span>
-                                {citation.segmentType ? (
-                                  <span className="rounded-full bg-white border border-gray-200 px-2 py-0.5 text-[10px] text-gray-500">
-                                    {citation.segmentType}
-                                  </span>
-                                ) : null}
-                                {typeof citation.chunkIndex === 'number' ? (
-                                  <span className="text-[10px] text-gray-400">Chunk {citation.chunkIndex + 1}</span>
-                                ) : null}
-                              </div>
-                              {citation.headingPath ? (
-                                <div className="text-[11px] text-gray-500 mb-1">{citation.headingPath}</div>
-                              ) : null}
-                              <div className="line-clamp-2 text-gray-600">{citation.snippet}</div>
-                            </div>
-                          ))}
-                        </div>
+                    {message.verification ? (
+                      <div className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium transition-all animate-in fade-in duration-500 ${
+                        message.verification.faithful 
+                          ? 'bg-blue-50 text-blue-700 border border-blue-100' 
+                          : 'bg-red-50 text-red-700 border border-red-100'
+                      }`} title={message.verification.reason}>
+                        {message.verification.faithful ? (
+                          <CheckCircle2 size={10} className="text-blue-500" />
+                        ) : (
+                          <AlertCircle size={10} className="text-red-500" />
+                        )}
+                        <span>{message.verification.faithful ? 'Faithful' : 'Unfaithful'}</span>
                       </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {message.role === 'assistant' && ((message.citations?.length ?? 0) > 0 || (message.retrievedChunks?.length ?? 0) > 0) ? (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {(message.citations?.length ?? 0) > 0 ? (
+                      <button
+                        onClick={() => onCitationClick?.(message.citations!)}
+                        className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white border border-gray-200 text-[11px] font-medium text-gray-600 hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-700 transition-all shadow-sm group/cite"
+                      >
+                        <FileText size={12} className="text-gray-400 group-hover/cite:text-emerald-500" />
+                        <span>{message.citations?.length} References</span>
+                      </button>
                     ) : null}
 
                     {(message.retrievedChunks?.length ?? 0) > 0 ? (
-                      <details className="rounded-xl border border-gray-200 bg-[#fafafa] px-3 py-2">
-                        <summary className="cursor-pointer text-[11px] font-medium text-gray-500 uppercase tracking-wide">
-                          Retrieved Chunks ({message.retrievedChunks?.length ?? 0})
-                        </summary>
-                        <div className="mt-2 space-y-3">
-                          {message.retrievedChunks?.slice(0, 3).map((chunk) => (
-                            <div key={chunk.chunkId} className="text-xs text-gray-600">
-                              <div className="flex flex-wrap gap-2 items-center mb-1">
-                                <span className="font-medium text-gray-800">{chunk.docName || 'Unknown Document'}</span>
-                                {chunk.segmentType ? (
-                                  <span className="rounded-full bg-white border border-gray-200 px-2 py-0.5 text-[10px] text-gray-500">
-                                    {chunk.segmentType}
-                                  </span>
-                                ) : null}
-                                {typeof chunk.chunkIndex === 'number' ? (
-                                  <span className="text-[10px] text-gray-400">Chunk {chunk.chunkIndex + 1}</span>
-                                ) : null}
-                              </div>
-                              {chunk.headingPath ? (
-                                <div className="text-[11px] text-gray-500 mb-1">{chunk.headingPath}</div>
-                              ) : null}
-                              <div className="line-clamp-4 whitespace-pre-wrap">{chunk.content}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
+                      <button
+                        onClick={() => onCitationClick?.(message.retrievedChunks!.map(c => ({
+                          chunkId: c.chunkId,
+                          docId: c.docId,
+                          docName: c.docName,
+                          chunkIndex: c.chunkIndex,
+                          headingPath: c.headingPath,
+                          segmentType: c.segmentType,
+                          score: c.score,
+                          snippet: c.content
+                        })))}
+                        className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white border border-gray-200 text-[11px] font-medium text-gray-600 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-700 transition-all shadow-sm group/chunk"
+                      >
+                        <Search size={12} className="text-gray-400 group-hover/chunk:text-blue-500" />
+                        <span>{message.retrievedChunks?.length} Chunks</span>
+                      </button>
                     ) : null}
                   </div>
                 ) : null}

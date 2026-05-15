@@ -79,6 +79,7 @@ public class DocumentChunkingService {
                     intValue(config, "chunkSize", DEFAULT_FIXED_CHUNK_SIZE),
                     intValue(config, "overlap", DEFAULT_FIXED_OVERLAP),
                     maxTokens);
+            case "parent-child" -> parentChildChunksWithMeta(text, config, maxTokens);
             case "paper", "manual", "table" -> paragraphChunksWithMeta(text,
                     intValue(config, "maxChars", DEFAULT_PARAGRAPH_MAX_CHARS),
                     intValue(config, "overlapParagraphs", DEFAULT_PARAGRAPH_OVERLAP),
@@ -129,6 +130,37 @@ public class DocumentChunkingService {
                 intValue(config, "minChunkChars", DEFAULT_PARAGRAPH_MIN_CHARS),
                 intValue(config, "maxTokens", DEFAULT_MAX_TOKENS),
                 normalizedStrategy);
+    }
+
+    private List<ChunkResult> parentChildChunksWithMeta(String text, Map<String, Object> config, int maxTokens) {
+        int parentSize = intValue(config, "parentSize", 1000);
+        int childSize = intValue(config, "childSize", 300);
+        int overlap = intValue(config, "overlap", 50);
+
+        List<ChunkResult> allResults = new ArrayList<>();
+        // First, split into big chunks (parents)
+        List<ChunkResult> parents = fixedChunksWithMeta(text, parentSize, overlap, maxTokens);
+        
+        for (int i = 0; i < parents.size(); i++) {
+            ChunkResult parent = parents.get(i);
+            String parentId = "p-" + i + "-" + System.currentTimeMillis(); // Temporary ID until persisted
+            
+            // Add parent to results with a special marker
+            Map<String, Object> parentMeta = new LinkedHashMap<>(parent.metadata());
+            parentMeta.put("isParent", true);
+            parentMeta.put("chunkId", parentId);
+            allResults.add(new ChunkResult(parent.content(), parent.headingPath(), parentMeta));
+
+            // Split parent into small chunks (children)
+            List<ChunkResult> children = fixedChunksWithMeta(parent.content(), childSize, overlap, maxTokens);
+            for (ChunkResult child : children) {
+                Map<String, Object> childMeta = new LinkedHashMap<>(child.metadata());
+                childMeta.put("parentId", parentId);
+                childMeta.put("isChild", true);
+                allResults.add(new ChunkResult(child.content(), child.headingPath(), childMeta));
+            }
+        }
+        return allResults;
     }
 
     private List<ChunkResult> fixedChunksWithMeta(String text, int chunkSize, int overlap, int maxTokens) {

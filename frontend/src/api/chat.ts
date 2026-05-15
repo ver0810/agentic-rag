@@ -9,6 +9,11 @@ export interface MessageMetadata {
   rewrittenQuery?: string;
   citations?: RagCitation[];
   retrievedChunks?: RagRetrievedChunk[];
+  verification?: {
+    faithful: boolean;
+    score: number;
+    reason: string;
+  };
 }
 
 export interface Message {
@@ -21,6 +26,11 @@ export interface Message {
   rewrittenQuery?: string;
   citations?: RagCitation[];
   retrievedChunks?: RagRetrievedChunk[];
+  verification?: {
+    faithful: boolean;
+    score: number;
+    reason: string;
+  };
 }
 
 export interface ChatMessageResponse {
@@ -84,7 +94,7 @@ export const ChatAPI = {
     conversationId: string, 
     scene?: string, 
     kbId?: string,
-    onUpdate?: (text: string, metadata?: ChatResult) => void
+    onUpdate?: (text: string, metadata?: ChatResult, verification?: any) => void
   ) => {
     const url = new URL('/chat/stream', window.location.origin);
     url.searchParams.append('message', message);
@@ -135,6 +145,8 @@ export const ChatAPI = {
             } else if (event.type === 'chunk') {
               accumulatedContent += event.data;
               if (onUpdate) onUpdate(accumulatedContent, currentMetadata);
+            } else if (event.type === 'verification') {
+              if (onUpdate) onUpdate(accumulatedContent, currentMetadata, event.data);
             } else if (event.type === 'error') {
               throw new Error(event.data);
             } else if (event.type === 'done') {

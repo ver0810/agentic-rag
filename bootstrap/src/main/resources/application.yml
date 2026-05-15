@@ -110,7 +110,15 @@ agenticrag:
       vector-weight: 0.7
       keyword-weight: 0.3
       rewrite-enabled: true
+      multi-query-enabled: ${RAG_MULTI_QUERY_ENABLED:false}
+      multi-query-count: ${RAG_MULTI_QUERY_COUNT:3}
+      parallel-retrieval-enabled: ${RAG_PARALLEL_RETRIEVAL_ENABLED:true}
+      context-expansion-enabled: ${RAG_CONTEXT_EXPANSION_ENABLED:false}
+      context-expansion-mode: ${RAG_CONTEXT_EXPANSION_MODE:window}
+      context-window-size: ${RAG_CONTEXT_WINDOW_SIZE:1}
+      self-rag-enabled: ${RAG_SELF_RAG_ENABLED:false}
       rerank-enabled: true
+      rerank-threshold: ${RAG_RERANK_THRESHOLD:0.0}
       reranker-type: ${RERANKER_TYPE:dashscope}
       reranker-api-url: ${RERANKER_API_URL:}
       reranker-api-key: ${RERANKER_API_KEY:${EMBEDDING_API_KEY:${API_KEY}}}

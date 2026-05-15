@@ -1,4 +1,4 @@
-import type { FormEvent } from 'react';
+import { useEffect, useRef, type FormEvent } from 'react';
 import { Send } from 'lucide-react';
 
 interface ChatComposerProps {
@@ -14,6 +14,15 @@ export default function ChatComposer({
   onInputChange,
   onSubmit,
 }: ChatComposerProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+    }
+  }, [input]);
+
   return (
     <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-white via-white/95 to-transparent pt-10 pb-6 px-4">
       <div className="max-w-3xl mx-auto relative group">
@@ -22,18 +31,18 @@ export default function ChatComposer({
           className="relative bg-white border border-[#e5e5e5] rounded-2xl shadow-[0_0_20px_rgba(0,0,0,0.05)] focus-within:border-gray-300 transition-all overflow-hidden"
         >
           <textarea
+            ref={textareaRef}
             value={input}
             onChange={(e) => onInputChange(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                onSubmit(e);
+                onSubmit(e as any);
               }
             }}
             placeholder="Message Agentic RAG..."
             rows={1}
-            className="w-full p-4 pr-16 resize-none bg-transparent focus:outline-none text-[15px] max-h-40 scrollbar-hide"
-            style={{ height: 'auto' }}
+            className="w-full p-4 pr-16 resize-none bg-transparent focus:outline-none text-[15px] max-h-[200px] overflow-y-auto"
           />
           <div className="absolute right-3 bottom-3 flex items-center gap-2">
             <button

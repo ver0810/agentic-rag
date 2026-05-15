@@ -10,19 +10,28 @@ import com.agenticrag.infra.ai.port.embedding.KnowledgeEmbeddingPort;
 import com.agenticrag.infra.ai.port.vector.VectorIndexPort;
 import com.agenticrag.infra.ai.service.AiChatService;
 import com.agenticrag.knowledge.dao.entity.KnowledgeBaseEntity;
+import com.agenticrag.knowledge.dao.entity.KnowledgeChunkEntity;
 import com.agenticrag.knowledge.dao.mapper.KnowledgeBaseMapper;
+import com.agenticrag.knowledge.dao.mapper.KnowledgeChunkMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -51,6 +60,8 @@ public class DefaultRagQueryService implements RagQueryService {
     private final RagTraceRecorder ragTraceRecorder;
     private final TokenCostEstimator tokenCostEstimator;
     private final KnowledgeBaseMapper knowledgeBaseMapper;
+    private final KnowledgeChunkMapper knowledgeChunkMapper;
+    private final AnswerVerificationService answerVerificationService;
     private final RagCacheService ragCacheService;
 
     public DefaultRagQueryService(KnowledgeEmbeddingPort embeddingPort,
@@ -62,6 +73,8 @@ public class DefaultRagQueryService implements RagQueryService {
                                   @Lazy RagTraceRecorder ragTraceRecorder,
                                   TokenCostEstimator tokenCostEstimator,
                                   KnowledgeBaseMapper knowledgeBaseMapper,
+                                  KnowledgeChunkMapper knowledgeChunkMapper,
+                                  AnswerVerificationService answerVerificationService,
                                   RagCacheService ragCacheService) {
         this.embeddingPort = embeddingPort;
         this.vectorIndexPort = vectorIndexPort;
@@ -72,6 +85,8 @@ public class DefaultRagQueryService implements RagQueryService {
         this.ragTraceRecorder = ragTraceRecorder;
         this.tokenCostEstimator = tokenCostEstimator;
         this.knowledgeBaseMapper = knowledgeBaseMapper;
+        this.knowledgeChunkMapper = knowledgeChunkMapper;
+        this.answerVerificationService = answerVerificationService;
         this.ragCacheService = ragCacheService;
     }
 
@@ -106,6 +121,13 @@ public class DefaultRagQueryService implements RagQueryService {
         String traceId = ragTraceRecorder.startRun("rag_query", "RagQueryService.queryDetailed", conversationId, userId, Map.of("kbId", kbId, "query", query));
         try {
             RetrievalResult retrievalResult = retrieve(query, kbId, userId, context, topK, traceId);
+
+            if (ragProperties.isSelfRagEnabled()) {
+                String verifyNodeId = ragTraceRecorder.startNode(traceId, "verify_evidence", "evidence_quality", Map.of());
+                AnswerVerificationService.EvidenceQuality quality = answerVerificationService.evaluateEvidence(query, retrievalResult.results(), context);
+                ragTraceRecorder.completeNode(traceId, verifyNodeId, Map.of("sufficient", quality.sufficient(), "score", quality.score(), "reason", quality.reason()));
+            }
+
             String prompt = String.format(retrievalResult.promptTemplate(), retrievalResult.retrievedContext(), query);
             int estimatedPromptTokens = tokenCostEstimator.estimateTokens(prompt);
 
@@ -114,6 +136,20 @@ public class DefaultRagQueryService implements RagQueryService {
             
             int estimatedAnswerTokens = tokenCostEstimator.estimateTokens(answer);
             ragTraceRecorder.completeNode(traceId, generateNodeId, Map.of("answerLength", answer.length()));
+
+            if (ragProperties.isSelfRagEnabled()) {
+                final String finalAnswer = answer;
+                final RetrievalResult finalRetrievalResult = retrievalResult;
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        String faithNodeId = ragTraceRecorder.startNode(traceId, "verify_faithfulness", "answer_faithfulness", Map.of());
+                        AnswerVerificationService.FaithfulnessResult faith = answerVerificationService.verifyFaithfulness(query, finalAnswer, finalRetrievalResult.results(), context);
+                        ragTraceRecorder.completeNode(traceId, faithNodeId, Map.of("faithful", faith.faithful(), "score", faith.score(), "reason", faith.reason()));
+                    } catch (Exception e) {
+                        log.error("Async faithfulness verification failed for trace {}: {}", traceId, e.getMessage());
+                    }
+                });
+            }
 
             completeTrace(traceId, retrievalResult, answer, estimatedPromptTokens, estimatedAnswerTokens);
             
@@ -134,6 +170,12 @@ public class DefaultRagQueryService implements RagQueryService {
         String traceId = ragTraceRecorder.startRun("rag_query_stream", "RagQueryService.streamQueryDetailed", conversationId, userId, Map.of("kbId", kbId, "query", query));
         try {
             RetrievalResult retrievalResult = retrieve(query, kbId, userId, context, topK, traceId);
+
+            if (ragProperties.isSelfRagEnabled()) {
+                String verifyNodeId = ragTraceRecorder.startNode(traceId, "verify_evidence", "evidence_quality", Map.of());
+                AnswerVerificationService.EvidenceQuality quality = answerVerificationService.evaluateEvidence(query, retrievalResult.results(), context);
+                ragTraceRecorder.completeNode(traceId, verifyNodeId, Map.of("sufficient", quality.sufficient(), "score", quality.score(), "reason", quality.reason()));
+            }
             
             ChatResult metadata = new ChatResult(
                     null,
@@ -151,16 +193,34 @@ public class DefaultRagQueryService implements RagQueryService {
             String generateNodeId = ragTraceRecorder.startNode(traceId, "generate", "answer_generation", Map.of("contextChunkCount", retrievalResult.results().size()));
             StringBuilder fullAnswer = new StringBuilder();
 
+            Flux<ChatEvent> answerFlux = chatService.stream(AiChatScene.RAG_QA, prompt, context, conversationId, userId)
+                    .map(ChatEvent::chunk)
+                    .doOnNext(event -> fullAnswer.append((String) event.data()))
+                    .doOnComplete(() -> {
+                        int estimatedAnswerTokens = tokenCostEstimator.estimateTokens(fullAnswer.toString());
+                        ragTraceRecorder.completeNode(traceId, generateNodeId, Map.of("answerLength", fullAnswer.length()));
+                        completeTrace(traceId, retrievalResult, fullAnswer.toString(), estimatedPromptTokens, estimatedAnswerTokens);
+                    });
+
             return Flux.concat(
                     Flux.just(ChatEvent.metadata(metadata)),
-                    chatService.stream(AiChatScene.RAG_QA, prompt, context, conversationId, userId)
-                            .map(ChatEvent::chunk)
-                            .doOnNext(event -> fullAnswer.append((String) event.data()))
-                            .doOnComplete(() -> {
-                                int estimatedAnswerTokens = tokenCostEstimator.estimateTokens(fullAnswer.toString());
-                                ragTraceRecorder.completeNode(traceId, generateNodeId, Map.of("answerLength", fullAnswer.length()));
-                                completeTrace(traceId, retrievalResult, fullAnswer.toString(), estimatedPromptTokens, estimatedAnswerTokens);
-                            }),
+                    answerFlux,
+                    Mono.defer(() -> {
+                        if (ragProperties.isSelfRagEnabled()) {
+                            return Mono.fromFuture(CompletableFuture.supplyAsync(() -> {
+                                try {
+                                    String faithNodeId = ragTraceRecorder.startNode(traceId, "verify_faithfulness", "answer_faithfulness", Map.of());
+                                    AnswerVerificationService.FaithfulnessResult faith = answerVerificationService.verifyFaithfulness(query, fullAnswer.toString(), retrievalResult.results(), context);
+                                    ragTraceRecorder.completeNode(traceId, faithNodeId, Map.of("faithful", faith.faithful(), "score", faith.score(), "reason", faith.reason()));
+                                    return ChatEvent.verification(faith);
+                                } catch (Exception e) {
+                                    log.error("Async faithfulness verification failed for trace {}: {}", traceId, e.getMessage());
+                                    return null;
+                                }
+                            })).filter(java.util.Objects::nonNull);
+                        }
+                        return Mono.empty();
+                    }),
                     Flux.just(ChatEvent.done())
             ).onErrorResume(ex -> {
                 ragTraceRecorder.failRun(traceId, ex.getMessage(), Map.of());
@@ -172,6 +232,111 @@ public class DefaultRagQueryService implements RagQueryService {
         }
     }
 
+    private List<? extends VectorIndexPort.SearchResult> expandContext(List<? extends VectorIndexPort.SearchResult> results, String traceId) {
+        if (results == null || results.isEmpty()) {
+            return results;
+        }
+
+        String nodeId = ragTraceRecorder.startNode(traceId, "context_expansion", "expand_" + ragProperties.getContextExpansionMode(), Map.of("mode", ragProperties.getContextExpansionMode(), "inputSize", results.size()));
+        try {
+            List<? extends VectorIndexPort.SearchResult> expanded;
+            if ("window".equalsIgnoreCase(ragProperties.getContextExpansionMode())) {
+                expanded = expandByWindow(results);
+            } else if ("parent".equalsIgnoreCase(ragProperties.getContextExpansionMode())) {
+                expanded = expandByParent(results);
+            } else {
+                expanded = results;
+            }
+            ragTraceRecorder.completeNode(traceId, nodeId, Map.of("outputSize", expanded.size()));
+            return expanded;
+        } catch (Exception ex) {
+            log.error("Failed to expand context: {}", ex.getMessage());
+            ragTraceRecorder.failNode(traceId, nodeId, ex.getMessage(), Map.of());
+            return results;
+        }
+    }
+
+    private List<? extends VectorIndexPort.SearchResult> expandByWindow(List<? extends VectorIndexPort.SearchResult> results) {
+        Map<String, List<VectorIndexPort.SearchResult>> docs = new HashMap<>();
+        for (VectorIndexPort.SearchResult r : results) {
+            String docId = (String) r.metadata().get("docId");
+            if (docId != null) {
+                docs.computeIfAbsent(docId, k -> new ArrayList<>()).add(r);
+            }
+        }
+
+        List<VectorIndexPort.SearchResult> finalResults = new ArrayList<>();
+        int window = ragProperties.getContextWindowSize();
+
+        for (Map.Entry<String, List<VectorIndexPort.SearchResult>> entry : docs.entrySet()) {
+            String docId = entry.getKey();
+            List<VectorIndexPort.SearchResult> originalChunks = entry.getValue();
+            Set<Integer> targetIndices = new HashSet<>();
+
+            for (VectorIndexPort.SearchResult r : originalChunks) {
+                Object idxObj = r.metadata().get("chunkIndex");
+                if (idxObj instanceof Number num) {
+                    int idx = num.intValue();
+                    for (int i = idx - window; i <= idx + window; i++) {
+                        if (i >= 0) {
+                            targetIndices.add(i);
+                        }
+                    }
+                }
+            }
+
+            if (!targetIndices.isEmpty()) {
+                List<KnowledgeChunkEntity> chunks = knowledgeChunkMapper.selectList(
+                        new LambdaQueryWrapper<KnowledgeChunkEntity>()
+                                .eq(KnowledgeChunkEntity::getDocId, docId)
+                                .in(KnowledgeChunkEntity::getChunkIndex, targetIndices)
+                                .orderByAsc(KnowledgeChunkEntity::getChunkIndex)
+                );
+
+                for (KnowledgeChunkEntity chunk : chunks) {
+                    finalResults.add(new SearchResultView(
+                            chunk.getId(),
+                            chunk.getContent(),
+                            1.0f, // Use dummy score for expanded content
+                            Map.of("docId", docId, "chunkIndex", chunk.getChunkIndex(), "docName", originalChunks.get(0).metadata().get("docName"))
+                    ));
+                }
+            }
+        }
+
+        return finalResults;
+    }
+
+    private List<? extends VectorIndexPort.SearchResult> expandByParent(List<? extends VectorIndexPort.SearchResult> results) {
+        // Simple implementation: if parentId exists in metadata, fetch it.
+        // Otherwise, fallback to original.
+        List<VectorIndexPort.SearchResult> finalResults = new ArrayList<>();
+        for (VectorIndexPort.SearchResult r : results) {
+            String parentId = (String) r.metadata().get("parentId");
+            if (parentId != null) {
+                KnowledgeChunkEntity parent = knowledgeChunkMapper.selectById(parentId);
+                if (parent != null) {
+                    finalResults.add(new SearchResultView(
+                            parent.getId(),
+                            parent.getContent(),
+                            r.score(),
+                            parentMetadata(parent, r.metadata())
+                    ));
+                    continue;
+                }
+            }
+            finalResults.add(r);
+        }
+        return finalResults;
+    }
+
+    private Map<String, Object> parentMetadata(KnowledgeChunkEntity parent, Map<String, Object> childMeta) {
+        Map<String, Object> meta = new HashMap<>(childMeta);
+        meta.put("isParent", true);
+        meta.put("parentIndex", parent.getChunkIndex());
+        return meta;
+    }
+
     private RetrievalResult retrieve(String query, String kbId, String userId, AiRuntimeContext context, int topK, String traceId) {
         int effectiveTopK = topK > 0 ? topK : ragProperties.getDefaultTopK();
         KnowledgeBaseSettings kbSettings = resolveKnowledgeBaseSettings(kbId);
@@ -181,37 +346,51 @@ public class DefaultRagQueryService implements RagQueryService {
         String retrieveNodeId = ragTraceRecorder.startNode(traceId, "retrieve", "hybrid_retrieve", Map.of("queries", queries));
         
         try {
-            int totalEstimatedEmbeddingTokens = 0;
-            double totalEstimatedEmbeddingCost = 0;
             Map<String, Object> filter = Map.of("kbId", kbId);
             List<List<? extends VectorIndexPort.SearchResult>> allVectorResults = new ArrayList<>();
             List<List<? extends VectorIndexPort.SearchResult>> allKeywordResults = new ArrayList<>();
+            int totalEstimatedEmbeddingTokens = 0;
+            double totalEstimatedEmbeddingCost = 0;
 
-            for (String q : queries) {
-                int estimatedTokens = tokenCostEstimator.estimateTokens(q);
-                totalEstimatedEmbeddingTokens += estimatedTokens;
-                totalEstimatedEmbeddingCost += tokenCostEstimator.estimateEmbeddingCost(estimatedTokens);
+            if (ragProperties.isParallelRetrievalEnabled() && queries.size() > 1) {
+                List<CompletableFuture<QueryResultPair>> futures = queries.stream()
+                        .map(q -> CompletableFuture.supplyAsync(() -> performSingleRetrieve(q, effectiveTopK, effectiveThreshold, filter)))
+                        .toList();
 
-                float[] queryEmbedding = ragCacheService.getEmbedding(q);
-                if (queryEmbedding == null) {
-                    queryEmbedding = embeddingPort.embed(q);
-                    ragCacheService.putEmbedding(q, queryEmbedding);
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+                for (CompletableFuture<QueryResultPair> future : futures) {
+                    QueryResultPair pair = future.join();
+                    allVectorResults.add(pair.vectorResults());
+                    if (pair.keywordResults() != null) {
+                        allKeywordResults.add(pair.keywordResults());
+                    }
+                    totalEstimatedEmbeddingTokens += pair.tokens();
+                    totalEstimatedEmbeddingCost += pair.cost();
                 }
-
-                List<? extends VectorIndexPort.SearchResult> vectorResults = vectorIndexPort.search(queryEmbedding, effectiveTopK, filter)
-                        .stream().filter(r -> r.score() >= effectiveThreshold).toList();
-                allVectorResults.add(vectorResults);
-
-                if (ragProperties.isHybridEnabled()) {
-                    List<? extends VectorIndexPort.SearchResult> keywordResults = vectorIndexPort.keywordSearch(q, effectiveTopK, filter)
-                            .stream().filter(r -> r.score() >= effectiveThreshold).toList();
-                    allKeywordResults.add(keywordResults);
+            } else {
+                for (String q : queries) {
+                    QueryResultPair pair = performSingleRetrieve(q, effectiveTopK, effectiveThreshold, filter);
+                    allVectorResults.add(pair.vectorResults());
+                    if (pair.keywordResults() != null) {
+                        allKeywordResults.add(pair.keywordResults());
+                    }
+                    totalEstimatedEmbeddingTokens += pair.tokens();
+                    totalEstimatedEmbeddingCost += pair.cost();
                 }
             }
 
             List<? extends VectorIndexPort.SearchResult> results = queries.size() == 1 ? allVectorResults.get(0) : mergeMultiQueryResults(allVectorResults, allKeywordResults, effectiveTopK);
             if (ragProperties.isRerankEnabled()) {
                 results = ragRerankService.rerank(query, results, effectiveTopK);
+                if (ragProperties.getRerankThreshold() > 0) {
+                    double threshold = ragProperties.getRerankThreshold();
+                    results = results.stream().filter(r -> r.score() >= threshold).toList();
+                }
+            }
+
+            if (ragProperties.isContextExpansionEnabled()) {
+                results = expandContext(results, traceId);
             }
 
             ragTraceRecorder.completeNode(traceId, retrieveNodeId, Map.of("resultCount", results.size()));
@@ -228,13 +407,41 @@ public class DefaultRagQueryService implements RagQueryService {
         }
     }
 
+    private QueryResultPair performSingleRetrieve(String q, int effectiveTopK, double effectiveThreshold, Map<String, Object> filter) {
+        int estimatedTokens = tokenCostEstimator.estimateTokens(q);
+        double estimatedCost = tokenCostEstimator.estimateEmbeddingCost(estimatedTokens);
+
+        float[] queryEmbedding = ragCacheService.getEmbedding(q);
+        if (queryEmbedding == null) {
+            queryEmbedding = embeddingPort.embed(q);
+            ragCacheService.putEmbedding(q, queryEmbedding);
+        }
+
+        List<? extends VectorIndexPort.SearchResult> vectorResults = vectorIndexPort.search(queryEmbedding, effectiveTopK, filter)
+                .stream().filter(r -> r.score() >= effectiveThreshold).toList();
+
+        List<? extends VectorIndexPort.SearchResult> keywordResults = null;
+        if (ragProperties.isHybridEnabled()) {
+            keywordResults = vectorIndexPort.keywordSearch(q, effectiveTopK, filter)
+                    .stream().filter(r -> r.score() >= effectiveThreshold).toList();
+        }
+
+        return new QueryResultPair(vectorResults, keywordResults, estimatedTokens, estimatedCost);
+    }
+
     private List<String> rewriteQuery(String query, String userId, AiRuntimeContext context, String traceId) {
         if (ragProperties.isRewriteEnabled()) {
             String rewriteNodeId = ragTraceRecorder.startNode(traceId, "rewrite", "query_rewrite", Map.of("query", query));
             try {
-                String rewritten = ragQueryRewriteService.rewrite(query, userId, context);
-                ragTraceRecorder.completeNode(traceId, rewriteNodeId, Map.of("rewrittenQuery", rewritten));
-                return List.of(rewritten);
+                if (ragProperties.isMultiQueryEnabled() && ragProperties.getMultiQueryCount() > 1) {
+                    List<String> rewrittenList = ragQueryRewriteService.rewriteMultiple(query, ragProperties.getMultiQueryCount(), userId, context);
+                    ragTraceRecorder.completeNode(traceId, rewriteNodeId, Map.of("rewrittenQueries", rewrittenList));
+                    return rewrittenList;
+                } else {
+                    String rewritten = ragQueryRewriteService.rewrite(query, userId, context);
+                    ragTraceRecorder.completeNode(traceId, rewriteNodeId, Map.of("rewrittenQuery", rewritten));
+                    return List.of(rewritten);
+                }
             } catch (Exception ex) {
                 ragTraceRecorder.failNode(traceId, rewriteNodeId, ex.getMessage(), Map.of());
             }
@@ -436,6 +643,13 @@ public class DefaultRagQueryService implements RagQueryService {
                 })
                 .toList();
     }
+
+    private record QueryResultPair(
+            List<? extends VectorIndexPort.SearchResult> vectorResults,
+            List<? extends VectorIndexPort.SearchResult> keywordResults,
+            int tokens,
+            double cost
+    ) {}
 
     private record SearchResultView(String chunkId, String content, float score, Map<String, Object> metadata)
             implements VectorIndexPort.SearchResult {}

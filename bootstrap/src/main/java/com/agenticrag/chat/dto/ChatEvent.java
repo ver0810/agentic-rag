@@ -19,6 +19,10 @@ public record ChatEvent(
         return new ChatEvent("error", message);
     }
 
+    public static ChatEvent verification(Object result) {
+        return new ChatEvent("verification", result);
+    }
+
     public static ChatEvent done() {
         return new ChatEvent("done", null);
     }

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import axios from 'axios';
 import { BrowserRouter as Router, Route, Routes, useNavigate } from 'react-router-dom';
+import { ArrowDown } from 'lucide-react';
 import ProtectedRoute from './components/ProtectedRoute';
 import { ChatAPI, type Message, type MessageMetadata } from './api/chat';
 import { FeedbackAPI } from './api/feedback';
@@ -9,6 +10,7 @@ import ChatSidebar from './components/chat/ChatSidebar';
 import ChatHeader from './components/chat/ChatHeader';
 import ChatContent from './components/chat/ChatContent';
 import ChatComposer from './components/chat/ChatComposer';
+import CitationPanel from './components/chat/CitationPanel';
 import type {
   AiSettings,
   ChatSessionItem,
@@ -17,6 +19,7 @@ import type {
   SidebarTab,
 } from './components/chat/types';
 import { clearAuth } from './utils/auth';
+import type { RagCitation } from './api/knowledge';
 
 const Login = lazy(() => import('./pages/Login'));
 const Register = lazy(() => import('./pages/Register'));
@@ -55,9 +58,25 @@ function ChatInterface() {
   const [highlightedTraceId, setHighlightedTraceId] = useState<string | null>(null);
   const [feedbackRatings, setFeedbackRatings] = useState<Record<string, number>>({});
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  const [activeCitations, setActiveCitations] = useState<RagCitation[]>([]);
+  const [showCitationPanel, setShowCitationPanel] = useState(false);
+  const [showScrollButton, setShowScrollButton] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+
+  const handleScroll = () => {
+    if (scrollContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
+      const isAtBottom = scrollHeight - scrollTop - clientHeight < 100;
+      setShowScrollButton(!isAtBottom && scrollTop > 300);
+    }
+  };
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   const userStr = localStorage.getItem('user');
   const user = userStr ? JSON.parse(userStr) : null;
@@ -168,6 +187,7 @@ function ChatInterface() {
             rewrittenQuery: metadata.rewrittenQuery,
             citations: metadata.citations,
             retrievedChunks: metadata.retrievedChunks,
+            verification: metadata.verification,
           };
         }) as Message[],
       );
@@ -331,7 +351,7 @@ function ChatInterface() {
         sessionId,
         selectedKbId ? 'rag_qa' : undefined,
         selectedKbId ?? undefined,
-        (accumulatedContent, metadata) => {
+        (accumulatedContent, metadata, verification) => {
           setMessages((prev) => {
             const next = [...prev];
             const lastMessage = next[next.length - 1];
@@ -345,6 +365,7 @@ function ChatInterface() {
               rewrittenQuery: metadata?.rewrittenQuery ?? lastMessage.rewrittenQuery,
               citations: metadata?.citations ?? lastMessage.citations,
               retrievedChunks: metadata?.retrievedChunks ?? lastMessage.retrievedChunks,
+              verification: verification ?? lastMessage.verification,
             };
             return next;
           });
@@ -405,6 +426,11 @@ function ChatInterface() {
     setActiveKb(null);
     setSidebarTab('observability');
     setObsTab('trace');
+  };
+
+  const handleCitationClick = (citations: RagCitation[]) => {
+    setActiveCitations(citations);
+    setShowCitationPanel(true);
   };
 
   const handleOpenConversationFromTrace = async (conversationId: string, traceId?: string) => {
@@ -537,7 +563,11 @@ function ChatInterface() {
           onSelectSceneKb={selectSceneKb}
         />
 
-        <div className="flex-1 overflow-y-auto scrollbar-hide pt-4">
+        <div 
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto scrollbar-hide pt-4"
+        >
           <Suspense fallback={<ContentFallback />}>
             {sidebarTab === 'observability' ? (
               obsTab === 'trace' ? (
@@ -554,22 +584,40 @@ function ChatInterface() {
                 messages={messages}
                 isLoading={isLoading}
                 messagesEndRef={messagesEndRef}
-                knowledgeBases={knowledgeBases}
                 highlightedTraceId={highlightedTraceId}
                 feedbackRatings={feedbackRatings}
                 isSubmittingFeedback={isSubmittingFeedback}
                 onTraceClick={handleTraceClick}
+                onCitationClick={handleCitationClick}
                 onSubmitFeedback={handleSubmitFeedback}
                 onSuggestionClick={setInput}
               />
             )}
           </Suspense>
+
+          {showScrollButton && (
+            <div className="absolute bottom-32 left-0 right-0 flex justify-center pointer-events-none">
+              <button
+                onClick={scrollToBottom}
+                className="pointer-events-auto p-2.5 bg-white border border-gray-200 rounded-full shadow-lg text-gray-600 hover:text-black hover:bg-gray-50 transition-all animate-in fade-in zoom-in duration-200"
+                title="Scroll to bottom"
+              >
+                <ArrowDown size={20} strokeWidth={2.5} />
+              </button>
+            </div>
+          )}
         </div>
 
         {sidebarTab !== 'observability' && !activeKb ? (
           <ChatComposer input={input} isLoading={isLoading} onInputChange={setInput} onSubmit={handleSubmit} />
         ) : null}
       </main>
+
+      <CitationPanel 
+        isOpen={showCitationPanel} 
+        onClose={() => setShowCitationPanel(false)} 
+        citations={activeCitations} 
+      />
     </div>
   );
 }
