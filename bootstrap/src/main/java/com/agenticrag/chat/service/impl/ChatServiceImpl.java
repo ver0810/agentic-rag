@@ -187,10 +187,29 @@ public class ChatServiceImpl implements ChatService {
         AiChatScene chatScene = AiChatScene.fromCode(scene);
 
         if (isRagRequest(chatScene, kbId)) {
+            StringBuilder fullAnswer = new StringBuilder();
+            java.util.concurrent.atomic.AtomicReference<ChatResult> metadataRef = new java.util.concurrent.atomic.AtomicReference<>();
+            
             return ragFacade.streamQuery(new RagQueryRequest(message, kbId, userId, context, 5, conversationId))
                     .doOnNext(event -> {
-                        if ("done".equals(event.type())) {
-                            // RAG completion handled in RagQueryService
+                        if ("metadata".equals(event.type())) {
+                            metadataRef.set((ChatResult) event.data());
+                        } else if ("chunk".equals(event.type())) {
+                            fullAnswer.append((String) event.data());
+                        } else if ("done".equals(event.type())) {
+                            ChatResult result = metadataRef.get();
+                            if (result != null) {
+                                // 构造与 query() 方法一致的 RagQueryResult 风格元数据
+                                Map<String, Object> metadataMap = new LinkedHashMap<>();
+                                metadataMap.put("sourceType", "rag");
+                                metadataMap.put("scene", scene);
+                                metadataMap.put("kbId", kbId);
+                                metadataMap.put("traceId", result.traceId());
+                                metadataMap.put("rewrittenQuery", result.rewrittenQuery());
+                                metadataMap.put("citations", result.citations());
+                                metadataMap.put("retrievedChunks", result.retrievedChunks());
+                                saveMessage(conversationId, userId, "assistant", fullAnswer.toString(), serializeMetadata(metadataMap));
+                            }
                         }
                     })
                     .onErrorResume(ex -> Flux.just(ChatEvent.error(ex.getMessage())));
