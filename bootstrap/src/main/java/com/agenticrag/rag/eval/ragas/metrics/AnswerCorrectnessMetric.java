@@ -17,8 +17,6 @@ import java.util.regex.Pattern;
 public class AnswerCorrectnessMetric {
 
     private static final Pattern SCORE_PATTERN = Pattern.compile("分数[：:][\\s]*([0-9.]+)");
-    private static final String CONVERSATION_ID = "ragas:answer_correctness";
-
     private final AiChatService aiChatService;
 
     public AnswerCorrectnessMetric(AiChatService aiChatService) {
@@ -33,11 +31,13 @@ public class AnswerCorrectnessMetric {
         String prompt = String.format(RagasPrompts.ANSWER_CORRECTNESS_PROMPT, question, answer, groundTruth);
 
         try {
+            // 使用唯一的 conversationId 以确保评测的无状态性
+            String conversationId = "eval:answer_correctness:" + java.util.UUID.randomUUID().toString().substring(0, 8);
             String response = aiChatService.call(
                     AiChatScene.EVALUATION,
                     prompt,
                     context,
-                    CONVERSATION_ID,
+                    conversationId,
                     userId);
 
             return parseScore(response);

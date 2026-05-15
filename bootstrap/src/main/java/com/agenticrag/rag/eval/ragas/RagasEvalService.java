@@ -69,8 +69,9 @@ public class RagasEvalService {
     public RagasResult evaluateSample(String kbId, RagasSample sample, String userId) {
         AiRuntimeContext context = userAiProviderConfigService.resolveRuntimeContext(userId);
 
-        // 1. 执行 RAG 查询
-        RagQueryResult queryResult = ragQueryService.queryDetailed(sample.question(), kbId, userId, context, 5);
+        // 1. 执行 RAG 查询，为每个样本生成唯一的 conversationId 以确保无状态性
+        String conversationId = "eval:rag:" + java.util.UUID.randomUUID().toString().substring(0, 8);
+        RagQueryResult queryResult = ragQueryService.queryDetailed(sample.question(), kbId, userId, context, conversationId, 5);
 
         String answer = queryResult.answer();
         List<String> contexts = queryResult.retrievedChunks().stream()

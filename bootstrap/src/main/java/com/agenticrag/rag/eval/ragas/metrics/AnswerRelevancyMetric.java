@@ -17,8 +17,6 @@ import java.util.regex.Pattern;
 public class AnswerRelevancyMetric {
 
     private static final Pattern SCORE_PATTERN = Pattern.compile("分数[：:][\\s]*([0-9.]+)");
-    private static final String CONVERSATION_ID = "ragas:answer_relevancy";
-
     private final AiChatService aiChatService;
 
     public AnswerRelevancyMetric(AiChatService aiChatService) {
@@ -33,11 +31,13 @@ public class AnswerRelevancyMetric {
         String prompt = String.format(RagasPrompts.ANSWER_RELEVANCY_PROMPT, question, answer);
 
         try {
+            // 使用唯一的 conversationId 以确保评测的无状态性
+            String conversationId = "eval:answer_relevancy:" + java.util.UUID.randomUUID().toString().substring(0, 8);
             String response = aiChatService.call(
                     AiChatScene.EVALUATION,
                     prompt,
                     context,
-                    CONVERSATION_ID,
+                    conversationId,
                     userId);
 
             return parseScore(response);

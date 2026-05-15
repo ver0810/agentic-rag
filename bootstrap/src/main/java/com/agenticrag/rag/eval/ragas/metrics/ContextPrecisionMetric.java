@@ -17,8 +17,6 @@ import java.util.regex.Pattern;
 public class ContextPrecisionMetric {
 
     private static final Pattern SCORE_PATTERN = Pattern.compile("分数[：:][\\s]*([0-9.]+)");
-    private static final String CONVERSATION_ID = "ragas:context_precision";
-
     private final AiChatService aiChatService;
 
     public ContextPrecisionMetric(AiChatService aiChatService) {
@@ -39,11 +37,13 @@ public class ContextPrecisionMetric {
                 contextBuilder.toString(), question, groundTruth);
 
         try {
+            // 使用唯一的 conversationId 以确保评测的无状态性
+            String conversationId = "eval:context_precision:" + java.util.UUID.randomUUID().toString().substring(0, 8);
             String response = aiChatService.call(
                     AiChatScene.EVALUATION,
                     prompt,
                     context,
-                    CONVERSATION_ID,
+                    conversationId,
                     userId);
 
             return parseScore(response);

@@ -13,4 +13,6 @@ public interface RagQueryService {
     RagQueryResult queryDetailed(String query, String kbId, String userId, int topK);
 
     RagQueryResult queryDetailed(String query, String kbId, String userId, AiRuntimeContext context, int topK);
+
+    RagQueryResult queryDetailed(String query, String kbId, String userId, AiRuntimeContext context, String conversationId, int topK);
 }

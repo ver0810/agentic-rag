@@ -94,14 +94,21 @@ public class DefaultRagQueryService implements RagQueryService {
 
     @Override
     public RagQueryResult queryDetailed(String query, String kbId, String userId, AiRuntimeContext context, int topK) {
-        log.info("RAG query: kbId={}, query={}", kbId, query);
+        String defaultConversationId = "rag:" + kbId + ":" + (userId == null ? "anonymous" : userId);
+        return queryDetailed(query, kbId, userId, context, defaultConversationId, topK);
+    }
+
+    @Override
+    public RagQueryResult queryDetailed(String query, String kbId, String userId, AiRuntimeContext context, String conversationId, int topK) {
+        log.info("RAG query: kbId={}, query={}, conversationId={}", kbId, query, conversationId);
         KnowledgeBaseSettings kbSettings = resolveKnowledgeBaseSettings(kbId);
         int effectiveTopK = topK > 0 ? topK : ragProperties.getDefaultTopK();
         double effectiveThreshold = kbSettings.similarityThreshold();
+
         String traceId = ragTraceRecorder.startRun(
                 "rag_query",
                 "RagQueryService.queryDetailed",
-                "rag:" + kbId + ":" + (userId == null ? "anonymous" : userId),
+                conversationId,
                 userId,
                 Map.of("kbId", kbId, "query", query, "topK", effectiveTopK));
         try {
@@ -251,7 +258,6 @@ public class DefaultRagQueryService implements RagQueryService {
             String generateNodeId = ragTraceRecorder.startNode(traceId, "generate", "answer_generation", Map.of("contextChunkCount", Math.min(results.size(), ragProperties.getMaxContextChunks())));
             String answer;
             try {
-                String conversationId = "rag:" + kbId + ":" + (userId == null ? "anonymous" : userId);
                 answer = chatService.call(AiChatScene.RAG_QA, prompt, context, conversationId, userId);
                 int estimatedAnswerTokens = tokenCostEstimator.estimateTokens(answer);
                 ragTraceRecorder.completeNode(traceId, generateNodeId, Map.of(

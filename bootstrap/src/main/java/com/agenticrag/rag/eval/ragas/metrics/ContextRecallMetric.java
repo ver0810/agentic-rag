@@ -17,8 +17,6 @@ import java.util.regex.Pattern;
 public class ContextRecallMetric {
 
     private static final Pattern SCORE_PATTERN = Pattern.compile("分数[：:][\\s]*([0-9.]+)");
-    private static final String CONVERSATION_ID = "ragas:context_recall";
-
     private final AiChatService aiChatService;
 
     public ContextRecallMetric(AiChatService aiChatService) {
@@ -34,11 +32,13 @@ public class ContextRecallMetric {
         String prompt = String.format(RagasPrompts.CONTEXT_RECALL_PROMPT, contextStr, question, groundTruth);
 
         try {
+            // 使用唯一的 conversationId 以确保评测的无状态性
+            String conversationId = "eval:context_recall:" + java.util.UUID.randomUUID().toString().substring(0, 8);
             String response = aiChatService.call(
                     AiChatScene.EVALUATION,
                     prompt,
                     context,
-                    CONVERSATION_ID,
+                    conversationId,
                     userId);
 
             return parseScore(response);
