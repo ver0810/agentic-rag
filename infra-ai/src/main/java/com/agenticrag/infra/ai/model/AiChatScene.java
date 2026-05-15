@@ -3,6 +3,7 @@ package com.agenticrag.infra.ai.model;
 public enum AiChatScene {
     GENERAL("general"),
     RAG_QA("rag_qa"),
+    EVALUATION("evaluation"),
     SUMMARY("summary"),
     TITLE_GENERATION("title_generation");
 

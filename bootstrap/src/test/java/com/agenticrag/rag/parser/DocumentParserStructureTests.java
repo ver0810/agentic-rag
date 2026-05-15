@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DocumentParserStructureTests {
@@ -150,6 +151,51 @@ class DocumentParserStructureTests {
         assertEquals("Guide", chunks.get(0).headingPath());
         assertEquals("Guide > Setup", chunks.get(1).headingPath());
         assertEquals("table", chunks.get(1).metadata().get("segmentType"));
+    }
+
+    @Test
+    void parserFactoryShouldAcceptExtensionAndStrategyRouting() {
+        MarkdownDocumentParser markdownParser = new MarkdownDocumentParser();
+        DocumentParserFactory factory = new DocumentParserFactory(List.of(markdownParser));
+
+        DocumentParser parser = factory.getParser("md", "manual");
+
+        assertSame(markdownParser, parser);
+    }
+
+    @Test
+    void chunkingShouldKeepManualSectionsSeparated() {
+        DocumentChunkingService service = new DocumentChunkingService(new ObjectMapper(), tokenCostEstimator());
+        StructuredParseResult parseResult = new StructuredParseResult(List.of(
+                new LogicalSegment("seg-0", "heading", "# Guide", "Guide", 0, 0, java.util.Map.of("headingLevel", 1, "segmentType", "heading")),
+                new LogicalSegment("seg-1", "paragraph", "Install prerequisites before setup.", "Guide > Install", 1, 1, java.util.Map.of("segmentType", "paragraph")),
+                new LogicalSegment("seg-2", "paragraph", "Run setup command and verify output.", "Guide > Setup", 2, 2, java.util.Map.of("segmentType", "paragraph"))
+        ), java.util.Map.of("docType", "md"));
+
+        List<ChunkResult> chunks = service.chunkWithMetadata(parseResult, "manual", "{\"maxChars\":200,\"minChunkChars\":10}");
+
+        assertEquals(2, chunks.size());
+        assertEquals("Guide > Install", chunks.get(0).headingPath());
+        assertEquals("Guide > Setup", chunks.get(1).headingPath());
+        assertEquals("manual", chunks.get(0).metadata().get("chunkStrategy"));
+    }
+
+    @Test
+    void chunkingShouldIsolateTablesForTableStrategy() {
+        DocumentChunkingService service = new DocumentChunkingService(new ObjectMapper(), tokenCostEstimator());
+        StructuredParseResult parseResult = new StructuredParseResult(List.of(
+                new LogicalSegment("seg-0", "paragraph", "Monthly metrics summary.", "Metrics", 0, 0, java.util.Map.of("segmentType", "paragraph")),
+                new LogicalSegment("seg-1", "table", "| Name | Value |\n| --- | --- |\n| Latency | 20ms |", "Metrics", 1, 1, java.util.Map.of("segmentType", "table", "tableMarkdown", "| Name | Value |")),
+                new LogicalSegment("seg-2", "caption", "Table 1: Runtime metrics", "Metrics", 2, 2, java.util.Map.of("segmentType", "caption"))
+        ), java.util.Map.of("docType", "md"));
+
+        List<ChunkResult> chunks = service.chunkWithMetadata(parseResult, "table", "{\"maxChars\":200,\"minChunkChars\":10}");
+
+        assertEquals(3, chunks.size());
+        assertEquals("paragraph", chunks.get(0).metadata().get("segmentType"));
+        assertEquals("table", chunks.get(1).metadata().get("segmentType"));
+        assertEquals("caption", chunks.get(2).metadata().get("segmentType"));
+        assertEquals("table", chunks.get(1).metadata().get("chunkStrategy"));
     }
 
     private TokenCostEstimator tokenCostEstimator() {

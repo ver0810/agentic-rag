@@ -1,7 +1,9 @@
 package com.agenticrag.common;
 
+import com.agenticrag.infra.ai.service.AiProviderException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -18,9 +20,21 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(ex.getStatus()).body(buildBody(ex.getCode(), ex.getMessage()));
     }
 
+    @ExceptionHandler(AiProviderException.class)
+    public ResponseEntity<Map<String, Object>> handleAiProviderException(AiProviderException ex) {
+        return ResponseEntity.status(ex.getStatus()).body(buildBody(ex.getCode(), ex.getMessage()));
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
         return ResponseEntity.badRequest().body(buildBody("bad_request", ex.getMessage()));
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException ex) {
+        return ResponseEntity.badRequest().body(buildBody(
+                "upload_file_too_large",
+                "上传文件过大，请控制在 50MB 以内"));
     }
 
     @ExceptionHandler(Exception.class)

@@ -56,6 +56,54 @@ export interface IngestionTask {
   nodes: IngestionTaskNode[];
 }
 
+export interface LayoutBlock {
+  id: string;
+  type: string;
+  bbox: Record<string, number>;
+  text?: string;
+  html?: string;
+  pageNum: number;
+  columnIndex: number;
+  confidence: number;
+  attributes: Record<string, unknown>;
+}
+
+export interface PageDebugInfo {
+  pageNum: number;
+  columnCount: number;
+  blocks: LayoutBlock[];
+  metadata: Record<string, unknown>;
+}
+
+export interface LogicalSegment {
+  id: string;
+  type: string;
+  content: string;
+  headingPath?: string | null;
+  startOrder: number;
+  endOrder: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface DocumentChunkPreview {
+  chunkIndex: number;
+  content: string;
+  headingPath?: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface DocumentStructurePreview {
+  docId: string;
+  docName: string;
+  fileType: string;
+  parseStrategy: string;
+  chunkStrategy: string;
+  documentMetadata: Record<string, unknown>;
+  pages: PageDebugInfo[];
+  segments: LogicalSegment[];
+  chunks: DocumentChunkPreview[];
+}
+
 export interface RagCitation {
   chunkId: string;
   docId: string;
@@ -120,6 +168,16 @@ export const KnowledgeAPI = {
 
   getTask: (taskId: string) =>
     axios.get<IngestionTask>(`/api/ingestion/tasks/${taskId}`),
+
+  previewDocumentStructure: (
+    docId: string,
+    params?: {
+      strategy?: string;
+      maxSegments?: number;
+      maxPages?: number;
+      maxChunks?: number;
+    }
+  ) => axios.get<DocumentStructurePreview>(`/api/knowledge-base/documents/${docId}/structure-preview`, { params }),
 
   retryTask: (taskId: string) =>
     axios.post<{ message: string; taskId: string }>(`/api/ingestion/tasks/${taskId}/retry`),

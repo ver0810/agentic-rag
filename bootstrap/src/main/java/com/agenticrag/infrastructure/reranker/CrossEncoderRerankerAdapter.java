@@ -28,7 +28,7 @@ public class CrossEncoderRerankerAdapter implements RerankerPort {
     public CrossEncoderRerankerAdapter(String apiUrl, String apiKey, String model, ObjectMapper objectMapper) {
         this.apiUrl = apiUrl;
         this.apiKey = apiKey;
-        this.model = model;
+        this.model = (model != null && !model.isBlank()) ? model : "bge-reranker-v2-m3";
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))

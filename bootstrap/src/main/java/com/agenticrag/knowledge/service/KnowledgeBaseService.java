@@ -2,6 +2,7 @@ package com.agenticrag.knowledge.service;
 
 import com.agenticrag.knowledge.dao.entity.KnowledgeBaseEntity;
 import com.agenticrag.knowledge.dao.entity.KnowledgeDocumentEntity;
+import com.agenticrag.knowledge.dto.DocumentStructurePreviewDTO;
 
 import java.util.List;
 
@@ -26,4 +27,11 @@ public interface KnowledgeBaseService {
     void processDocument(String docId);
 
     Integer getDocumentChunkCount(String docId);
+
+    DocumentStructurePreviewDTO previewDocumentStructure(String docId,
+                                                         String userId,
+                                                         String strategy,
+                                                         Integer maxSegments,
+                                                         Integer maxPages,
+                                                         Integer maxChunks);
 }

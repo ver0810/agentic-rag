@@ -4,6 +4,7 @@ import com.agenticrag.infra.ai.config.AiChatProperties;
 import com.agenticrag.infra.ai.model.AiChatScene;
 import com.agenticrag.infra.ai.model.AiRuntimeContext;
 import com.agenticrag.infra.ai.service.AiChatService;
+import com.agenticrag.infra.ai.service.AiProviderException;
 import com.agenticrag.infra.ai.service.AiProviderRouter;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -44,11 +45,15 @@ public class DefaultAiChatService implements AiChatService {
     public String call(AiChatScene scene, String message, AiRuntimeContext context, String conversationId, String userId) {
         String enhancedMessage = applyPreEnhancements(message, context);
         ChatClient chatClient = chatClients.get(conversationId, id -> buildChatClient(scene, context, id));
-        String result = chatClient.prompt()
-                .user(enhancedMessage)
-                .call()
-                .content();
-        return applyPostEnhancements(result, context);
+        try {
+            String result = chatClient.prompt()
+                    .user(enhancedMessage)
+                    .call()
+                    .content();
+            return applyPostEnhancements(result, context);
+        } catch (RuntimeException ex) {
+            throw translateException(ex);
+        }
     }
 
     @Override
@@ -58,7 +63,8 @@ public class DefaultAiChatService implements AiChatService {
         return chatClient.prompt()
                 .user(enhancedMessage)
                 .stream()
-                .content();
+                .content()
+                .onErrorMap(this::translateException);
     }
 
     private String applyPreEnhancements(String message, AiRuntimeContext context) {
@@ -138,5 +144,21 @@ public class DefaultAiChatService implements AiChatService {
 
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private RuntimeException translateException(Throwable ex) {
+        if (ex instanceof AiProviderException aiProviderException) {
+            return aiProviderException;
+        }
+
+        String message = ex.getMessage();
+        if (message != null) {
+            String normalized = message.toLowerCase();
+            if (normalized.contains("insufficient balance") || normalized.contains("http 402")) {
+                return AiProviderException.insufficientBalance(ex);
+            }
+        }
+
+        return AiProviderException.providerCallFailed("AI 提供商调用失败: " + (message == null ? ex.getClass().getSimpleName() : message), ex);
     }
 }

@@ -69,6 +69,11 @@ agenticrag:
         rag_qa:
           temperature: 0.2
           system-prompt: 你是一个严格基于检索上下文回答问题的知识库助手。如果证据不足，要明确说明。
+        evaluation:
+          model: ${EVALUATION_CHAT_MODEL:${OPENAI_CHAT_MODEL:deepseek-v4-flash}}
+          temperature: 0.0
+          max-tokens: 256
+          system-prompt: 你是一个严格的 RAG 评测裁判。只根据输入内容打分，输出简洁、稳定、可解析。
         summary:
           temperature: 0.3
           system-prompt: 你负责生成简洁、结构清晰的摘要。
@@ -78,15 +83,19 @@ agenticrag:
           system-prompt: 你负责为输入内容生成简洁明确的标题。
     rag:
       hybrid-enabled: true
-      default-top-k: 5
-      vector-top-k: 12
-      keyword-top-k: 8
-      similarity-threshold: 0.55
-      vector-weight: 0.75
-      keyword-weight: 0.25
+      default-top-k: 8
+      vector-top-k: 20
+      keyword-top-k: 15
+      similarity-threshold: 0.3
+      vector-weight: 0.7
+      keyword-weight: 0.3
       rewrite-enabled: true
       rerank-enabled: true
-      max-context-chunks: 6
+      reranker-type: ${RERANKER_TYPE:dashscope}
+      reranker-api-url: ${RERANKER_API_URL:}
+      reranker-api-key: ${RERANKER_API_KEY:${EMBEDDING_API_KEY:${API_KEY}}}
+      reranker-model: ${RERANKER_MODEL:qwen3-rerank}
+      max-context-chunks: 8
     observability:
       chars-per-token: 4.0
       cost:

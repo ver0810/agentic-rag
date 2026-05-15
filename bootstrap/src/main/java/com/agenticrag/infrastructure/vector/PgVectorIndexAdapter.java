@@ -8,10 +8,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 @Component
 public class PgVectorIndexAdapter implements VectorIndexPort {
@@ -30,9 +28,14 @@ public class PgVectorIndexAdapter implements VectorIndexPort {
         String vectorStr = formatVector(embedding);
 
         jdbcTemplate.update(
-                "INSERT INTO t_knowledge_vector (id, content, metadata, embedding) VALUES (?, ?, ?::jsonb, ?::vector) " +
-                        "ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, metadata = EXCLUDED.metadata, embedding = EXCLUDED.embedding",
-                chunkId, content, metadataJson, vectorStr);
+                "INSERT INTO t_knowledge_vector (id, content, metadata, embedding, tsv) " +
+                        "VALUES (?, ?, ?::jsonb, ?::vector, to_tsvector('simple', ?)) " +
+                        "ON CONFLICT (id) DO UPDATE SET " +
+                        "content = EXCLUDED.content, " +
+                        "metadata = EXCLUDED.metadata, " +
+                        "embedding = EXCLUDED.embedding, " +
+                        "tsv = EXCLUDED.tsv",
+                chunkId, content, metadataJson, vectorStr, content);
     }
 
     @Override
@@ -69,41 +72,32 @@ public class PgVectorIndexAdapter implements VectorIndexPort {
 
     @Override
     public List<VectorSearchResult> keywordSearch(String query, int topK, Map<String, Object> filter) {
-        List<String> terms = extractSearchTerms(query);
-        if (terms.isEmpty() || topK <= 0) {
+        if (!StringUtils.hasText(query) || topK <= 0) {
             return List.of();
         }
 
-        StringBuilder scoreExpr = new StringBuilder();
-        StringBuilder whereExpr = new StringBuilder();
-        List<Object> args = new ArrayList<>();
-        for (int i = 0; i < terms.size(); i++) {
-            if (i > 0) {
-                scoreExpr.append(" + ");
-                whereExpr.append(" OR ");
-            }
-            scoreExpr.append("CASE WHEN content ILIKE ? THEN 1 ELSE 0 END");
-            whereExpr.append("content ILIKE ?");
-            String pattern = "%" + terms.get(i) + "%";
-            args.add(pattern);
-        }
+        // PostgreSQL BM25 using ts_rank_cd
+        // ts_rank_cd uses cover density ranking, which approximates BM25
+        String tsQuery = buildTsQuery(query);
 
-        StringBuilder sql = new StringBuilder(
-                "SELECT id, content, (" + scoreExpr + ")::float / ? as score, metadata " +
-                        "FROM t_knowledge_vector WHERE ");
+        StringBuilder sql = new StringBuilder();
+        List<Object> args = new ArrayList<>();
+
+        sql.append("SELECT id, content, ");
+        sql.append("ts_rank_cd(tsv, to_tsquery('simple', ?), 32) as score, ");
+        sql.append("metadata ");
+        sql.append("FROM t_knowledge_vector ");
+        sql.append("WHERE tsv @@ to_tsquery('simple', ?) ");
+
+        args.add(tsQuery);
+        args.add(tsQuery);
 
         if (filter != null && !filter.isEmpty()) {
-            sql.append("metadata @> ?::jsonb AND (").append(whereExpr).append(")");
-            args.add((float) terms.size());
+            sql.append("AND metadata @> ?::jsonb ");
             args.add(serializeMetadata(filter));
-        } else {
-            sql.append("(").append(whereExpr).append(")");
-            args.add((float) terms.size());
         }
-        for (String term : terms) {
-            args.add("%" + term + "%");
-        }
-        sql.append(" ORDER BY score DESC, id ASC LIMIT ?");
+
+        sql.append("ORDER BY score DESC LIMIT ?");
         args.add(topK);
 
         return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> new VectorSearchResult(
@@ -124,6 +118,41 @@ public class PgVectorIndexAdapter implements VectorIndexPort {
     public void deleteByKbId(String kbId) {
         jdbcTemplate.update(
                 "DELETE FROM t_knowledge_vector WHERE metadata->>'kbId' = ?", kbId);
+    }
+
+    /**
+     * Build PostgreSQL tsquery from user input.
+     * Uses OR logic for multiple terms to maximize recall.
+     */
+    private String buildTsQuery(String query) {
+        String normalized = query.replaceAll("[^\\p{IsHan}\\p{IsAlphabetic}\\p{IsDigit}]+", " ").trim();
+        if (!StringUtils.hasText(normalized)) {
+            return "";
+        }
+
+        List<String> terms = new ArrayList<>();
+        for (String token : normalized.split("\\s+")) {
+            if (token.isBlank()) {
+                continue;
+            }
+            // For Chinese, use bigram segmentation
+            if (token.codePoints().anyMatch(cp -> Character.UnicodeScript.of(cp) == Character.UnicodeScript.HAN)) {
+                if (token.length() <= 2) {
+                    terms.add(token + ":*");
+                } else {
+                    for (int i = 0; i < token.length() - 1; i++) {
+                        terms.add(token.substring(i, i + 2) + ":*");
+                    }
+                }
+            } else if (token.length() >= 2) {
+                terms.add(token.toLowerCase() + ":*");
+            }
+            if (terms.size() >= 10) {
+                break;
+            }
+        }
+
+        return String.join(" | ", terms);
     }
 
     private String formatVector(float[] embedding) {
@@ -158,37 +187,6 @@ public class PgVectorIndexAdapter implements VectorIndexPort {
         } catch (JsonProcessingException e) {
             return Map.of();
         }
-    }
-
-    private List<String> extractSearchTerms(String query) {
-        if (!StringUtils.hasText(query)) {
-            return List.of();
-        }
-        String normalized = query.replaceAll("[^\\p{IsHan}\\p{IsAlphabetic}\\p{IsDigit}]+", " ").trim();
-        if (!StringUtils.hasText(normalized)) {
-            return List.of();
-        }
-        Set<String> terms = new LinkedHashSet<>();
-        for (String token : normalized.split("\\s+")) {
-            if (token.isBlank()) {
-                continue;
-            }
-            if (token.codePoints().anyMatch(codePoint -> Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN)) {
-                if (token.length() <= 2) {
-                    terms.add(token);
-                } else {
-                    for (int i = 0; i < token.length() - 1; i++) {
-                        terms.add(token.substring(i, i + 2));
-                    }
-                }
-            } else if (token.length() >= 2) {
-                terms.add(token.toLowerCase());
-            }
-            if (terms.size() >= 8) {
-                break;
-            }
-        }
-        return new ArrayList<>(terms);
     }
 
     private record VectorSearchResult(String chunkId, String content, float score, Map<String, Object> metadata)

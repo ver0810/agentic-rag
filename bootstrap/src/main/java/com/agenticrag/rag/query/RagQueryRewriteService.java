@@ -14,22 +14,31 @@ import java.util.List;
 public class RagQueryRewriteService {
 
     private static final String REWRITE_PROMPT = """
-            你负责把用户问题改写成适合知识库检索的独立查询。
-            规则：
-            1. 保留原问题中的专有名词、实体、时间和限定条件。
-            2. 不要发散，不要补充文档中不存在的事实。
-            3. 只输出一行改写后的查询，不要解释，不要加引号。
+            你负责把用户问题改写成适合向量数据库检索的查询语句。
+
+            改写规则：
+            1. 如果问题是"这个文档/简历/报告是什么"，改写为文档中可能存在的关键词，如人名、标题、主题。
+            2. 如果问题是"总结/概括"，改写为文档的核心主题词。
+            3. 如果问题是代词（如"他/她/它"），保留上下文但补充可能的实体词。
+            4. 保留专有名词、实体、时间。
+            5. 只输出改写后的查询，不要解释。
+
+            示例：
+            - "这是谁的简历？" → "简历 姓名 个人信息"
+            - "总结一下" → "主要内容 概述"
+            - "他有什么技能？" → "技能 能力 专业"
 
             用户问题：%s
-            """;
+            改写结果：""";
 
     private static final String MULTI_REWRITE_PROMPT = """
-            你负责把用户问题从 %d 个不同角度改写成适合知识库检索的查询。
-            规则：
-            1. 每个查询用不同的表达方式，但都指向同一个核心问题。
-            2. 保留原问题中的专有名词、实体、时间和限定条件。
-            3. 不要发散，不要补充文档中不存在的事实。
-            4. 每行一个查询，不要编号，不要解释，不要加引号。
+            你负责把用户问题从不同角度改写成 3 个适合检索的查询。
+            每个查询用不同的表达方式，覆盖不同的关键词。
+
+            示例输出格式（每行一个查询）：
+            关键词1 关键词2
+            关键词3 关键词4
+            关键词5 关键词6
 
             用户问题：%s
             """;
@@ -68,7 +77,7 @@ public class RagQueryRewriteService {
         try {
             String result = aiChatService.call(
                     AiChatScene.GENERAL,
-                    String.format(MULTI_REWRITE_PROMPT, count, query),
+                    String.format(MULTI_REWRITE_PROMPT, query),
                     context,
                     "rag:multi-rewrite:" + Integer.toHexString(query.hashCode()),
                     userId);

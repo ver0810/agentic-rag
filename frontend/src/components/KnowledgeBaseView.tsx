@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { useEffect, useState } from 'react';
 import {
   FileText,
@@ -60,7 +61,7 @@ export default function KnowledgeBaseView({ kb, onDelete }: KnowledgeBaseViewPro
   };
 
   const fetchTasksForDocuments = async (docs: KnowledgeDocument[]) => {
-    const entries = await Promise.all(
+    const taskEntries = await Promise.all(
       docs.map(async (doc) => {
         try {
           const response = await KnowledgeAPI.listDocumentTasks(doc.id);
@@ -71,7 +72,22 @@ export default function KnowledgeBaseView({ kb, onDelete }: KnowledgeBaseViewPro
         }
       })
     );
-    setTasksByDocument(Object.fromEntries(entries));
+    const detailedEntries = await Promise.all(
+      taskEntries.map(async ([docId, tasks]) => {
+        const latest = tasks[0];
+        if (!latest || !shouldLoadTaskDetail(latest)) {
+          return [docId, tasks] as const;
+        }
+        try {
+          const detail = await KnowledgeAPI.getTask(latest.id);
+          return [docId, [detail.data, ...tasks.slice(1)]] as const;
+        } catch (err) {
+          console.error('Failed to fetch task detail', latest.id, err);
+          return [docId, tasks] as const;
+        }
+      })
+    );
+    setTasksByDocument(Object.fromEntries(detailedEntries));
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -85,7 +101,7 @@ export default function KnowledgeBaseView({ kb, onDelete }: KnowledgeBaseViewPro
       await fetchDocuments();
     } catch (err) {
       console.error('Upload failed', err);
-      setError('Upload failed. Please try again.');
+      setError(resolveApiErrorMessage(err, 'Upload failed. Please try again.'));
     } finally {
       setIsUploading(false);
       if (e.target) e.target.value = '';
@@ -98,7 +114,7 @@ export default function KnowledgeBaseView({ kb, onDelete }: KnowledgeBaseViewPro
       await fetchDocuments();
     } catch (err) {
       console.error('Failed to start processing', err);
-      setError('Failed to start processing');
+      setError(resolveApiErrorMessage(err, 'Failed to start processing'));
     }
   };
 
@@ -108,7 +124,7 @@ export default function KnowledgeBaseView({ kb, onDelete }: KnowledgeBaseViewPro
       await fetchDocuments();
     } catch (err) {
       console.error('Failed to retry processing task', err);
-      setError('Failed to retry processing task');
+      setError(resolveApiErrorMessage(err, 'Failed to retry processing task'));
     }
   };
 
@@ -124,7 +140,7 @@ export default function KnowledgeBaseView({ kb, onDelete }: KnowledgeBaseViewPro
       });
     } catch (err) {
       console.error('Delete failed', err);
-      setError('Failed to delete document');
+      setError(resolveApiErrorMessage(err, 'Failed to delete document'));
     }
   };
 
@@ -153,6 +169,8 @@ export default function KnowledgeBaseView({ kb, onDelete }: KnowledgeBaseViewPro
 
   const displayName = (doc: KnowledgeDocument) => doc.docName || doc.fileName || 'Untitled document';
   const latestTask = (docId: string) => tasksByDocument[docId]?.[0];
+  const latestFailedNode = (docId: string) =>
+    latestTask(docId)?.nodes?.find((node) => node.status === 'FAILED');
 
   const taskStatusText = (task?: IngestionTask) => {
     if (!task) return null;
@@ -164,6 +182,16 @@ export default function KnowledgeBaseView({ kb, onDelete }: KnowledgeBaseViewPro
     }
     return task.status;
   };
+
+  const taskFailureText = (docId: string) => {
+    const node = latestFailedNode(docId);
+    if (!node) {
+      return null;
+    }
+    return `${formatNodeType(node.nodeType)} failed${node.errorMessage ? `: ${node.errorMessage}` : ''}`;
+  };
+
+  const uploadHint = 'Supports pdf/doc/docx/md/html/txt. Max 50MB per file.';
 
   return (
     <div className="flex flex-col h-full bg-white">
@@ -200,6 +228,7 @@ export default function KnowledgeBaseView({ kb, onDelete }: KnowledgeBaseViewPro
                 {isUploading ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
                 <span>{isUploading ? 'Uploading...' : 'Upload Document'}</span>
               </label>
+              <p className="mt-2 text-xs text-gray-400">{uploadHint}</p>
             </div>
           </div>
 
@@ -246,6 +275,9 @@ export default function KnowledgeBaseView({ kb, onDelete }: KnowledgeBaseViewPro
                     {latestTask(doc.id)?.errorMessage && (
                       <div className="mt-2 text-xs text-red-600 line-clamp-2">{latestTask(doc.id)?.errorMessage}</div>
                     )}
+                    {taskFailureText(doc.id) && (
+                      <div className="mt-2 text-xs text-amber-700 line-clamp-2">{taskFailureText(doc.id)}</div>
+                    )}
                     {taskStatusText(latestTask(doc.id)) && (
                       <div className="mt-2 text-xs text-gray-500">
                         Task: {taskStatusText(latestTask(doc.id))}{' '}
@@ -290,4 +322,38 @@ export default function KnowledgeBaseView({ kb, onDelete }: KnowledgeBaseViewPro
       </div>
     </div>
   );
+}
+
+function shouldLoadTaskDetail(task: IngestionTask) {
+  return ['FAILED', 'RUNNING', 'RETRYING'].includes(task.status);
+}
+
+function formatNodeType(nodeType?: string) {
+  switch ((nodeType || '').toLowerCase()) {
+    case 'parse':
+      return 'Parse';
+    case 'chunk':
+      return 'Chunk';
+    case 'embed':
+      return 'Embed';
+    case 'persist':
+      return 'Persist';
+    default:
+      return nodeType || 'Task';
+  }
+}
+
+function resolveApiErrorMessage(error: unknown, fallback: string) {
+  if (!axios.isAxiosError(error)) {
+    return fallback;
+  }
+  const code = error.response?.data?.code;
+  const message = error.response?.data?.message;
+  if (code === 'upload_file_too_large') {
+    return message || 'The uploaded file exceeds the 50MB limit.';
+  }
+  if (typeof message === 'string' && message.trim()) {
+    return message;
+  }
+  return fallback;
 }

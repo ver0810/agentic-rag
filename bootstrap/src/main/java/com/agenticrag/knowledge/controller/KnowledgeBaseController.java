@@ -3,6 +3,7 @@ package com.agenticrag.knowledge.controller;
 import com.agenticrag.infra.ai.port.storage.DocumentStoragePort;
 import com.agenticrag.knowledge.dao.entity.KnowledgeBaseEntity;
 import com.agenticrag.knowledge.dao.entity.KnowledgeDocumentEntity;
+import com.agenticrag.knowledge.dto.DocumentStructurePreviewDTO;
 import com.agenticrag.knowledge.dto.IngestionTaskDTO;
 import com.agenticrag.knowledge.service.IngestionTaskService;
 import com.agenticrag.knowledge.service.KnowledgeBaseService;
@@ -103,6 +104,23 @@ public class KnowledgeBaseController {
     public ResponseEntity<List<IngestionTaskDTO>> listDocumentTasks(@PathVariable String docId,
                                                                     @CurrentUser String userId) {
         return ResponseEntity.ok(ingestionTaskService.listDocumentTasks(docId, userId));
+    }
+
+    @GetMapping("/documents/{docId}/structure-preview")
+    public ResponseEntity<DocumentStructurePreviewDTO> previewDocumentStructure(
+            @PathVariable String docId,
+            @RequestParam(value = "strategy", required = false) String strategy,
+            @RequestParam(value = "maxSegments", required = false) Integer maxSegments,
+            @RequestParam(value = "maxPages", required = false) Integer maxPages,
+            @RequestParam(value = "maxChunks", required = false) Integer maxChunks,
+            @CurrentUser String userId) {
+        return ResponseEntity.ok(knowledgeBaseService.previewDocumentStructure(
+                docId,
+                userId,
+                strategy,
+                maxSegments,
+                maxPages,
+                maxChunks));
     }
 
     private String getFileExtension(String fileName) {
