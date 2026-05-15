@@ -19,7 +19,7 @@ import java.util.Map;
 @Slf4j
 public class DashScopeRerankerAdapter implements RerankerPort {
 
-    private static final String DEFAULT_API_URL = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-reranking/text-reranking";
+    private static final String DEFAULT_API_URL = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank";
 
     private final String apiUrl;
     private final String apiKey;
@@ -28,9 +28,9 @@ public class DashScopeRerankerAdapter implements RerankerPort {
     private final HttpClient httpClient;
 
     public DashScopeRerankerAdapter(String apiUrl, String apiKey, String model, ObjectMapper objectMapper) {
-        this.apiUrl = apiUrl != null ? apiUrl : DEFAULT_API_URL;
+        this.apiUrl = normalizeApiUrl(apiUrl);
         this.apiKey = apiKey;
-        this.model = model != null ? model : "gte-rerank";
+        this.model = (model != null && !model.isBlank()) ? model : "gte-rerank-v2";
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
@@ -110,5 +110,16 @@ public class DashScopeRerankerAdapter implements RerankerPort {
                 .limit(topK)
                 .map(c -> new RerankResult(c.chunkId(), c.content(), c.originalScore(), c.metadata()))
                 .toList();
+    }
+
+    private String normalizeApiUrl(String configuredApiUrl) {
+        if (configuredApiUrl == null || configuredApiUrl.isBlank()) {
+            return DEFAULT_API_URL;
+        }
+
+        return configuredApiUrl
+                .trim()
+                .replace("/text-reranking/", "/text-rerank/")
+                .replace("text-reranking", "text-rerank");
     }
 }
