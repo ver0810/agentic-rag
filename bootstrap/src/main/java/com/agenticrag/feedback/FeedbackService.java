@@ -32,21 +32,23 @@ public class FeedbackService {
         return entity;
     }
 
-    public List<FeedbackEntity> list(String kbId, Integer limit) {
+    public List<FeedbackEntity> list(String kbId, Integer limit, String userId) {
         LambdaQueryWrapper<FeedbackEntity> wrapper = new LambdaQueryWrapper<FeedbackEntity>()
                 .eq(FeedbackEntity::getDeleted, 0)
+                .eq(userId != null, FeedbackEntity::getUserId, userId)
                 .orderByDesc(FeedbackEntity::getCreateTime)
-                .last("limit " + Math.max(1, Math.min(limit != null ? limit : 50, 200)));
+                .last(true, "limit " + Math.max(1, Math.min(limit != null ? limit : 50, 200)));
         if (kbId != null) {
             wrapper.eq(FeedbackEntity::getKbId, kbId);
         }
         return feedbackMapper.selectList(wrapper);
     }
 
-    public FeedbackSummaryDTO getSummary(String kbId) {
+    public FeedbackSummaryDTO getSummary(String kbId, String userId) {
         List<FeedbackEntity> all = feedbackMapper.selectList(
                 new LambdaQueryWrapper<FeedbackEntity>()
                         .eq(FeedbackEntity::getDeleted, 0)
+                        .eq(userId != null, FeedbackEntity::getUserId, userId)
                         .eq(kbId != null, FeedbackEntity::getKbId, kbId));
         if (all.isEmpty()) {
             return new FeedbackSummaryDTO(0, 0L, 0L, 0L, 0.0);

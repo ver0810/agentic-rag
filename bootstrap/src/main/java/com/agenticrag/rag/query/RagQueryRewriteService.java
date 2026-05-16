@@ -3,6 +3,7 @@ package com.agenticrag.rag.query;
 import com.agenticrag.infra.ai.model.AiChatScene;
 import com.agenticrag.infra.ai.model.AiRuntimeContext;
 import com.agenticrag.infra.ai.service.AiChatService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -10,6 +11,7 @@ import org.springframework.util.StringUtils;
 import java.util.ArrayList;
 import java.util.List;
 
+@Slf4j
 @Service
 public class RagQueryRewriteService {
 
@@ -65,7 +67,8 @@ public class RagQueryRewriteService {
             }
             String normalized = rewritten.trim().replace("\n", " ");
             return normalized.length() > 200 ? normalized.substring(0, 200) : normalized;
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.warn("Query rewrite failed, falling back to original: {}", e.getMessage());
             return query;
         }
     }
@@ -99,7 +102,8 @@ public class RagQueryRewriteService {
                 }
             }
             return queries;
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.warn("Multi-query rewrite failed, falling back to original: {}", e.getMessage());
             return List.of(query);
         }
     }

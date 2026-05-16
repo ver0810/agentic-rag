@@ -71,7 +71,7 @@ public class DefaultAnswerVerificationService implements AnswerVerificationServi
             String response = aiChatService.call(AiChatScene.EVALUATION, prompt, context, "eval:evidence:" + Integer.toHexString(query.hashCode()), "system");
             return parseEvidenceResult(response);
         } catch (Exception e) {
-            log.warn("Failed to evaluate evidence: {}", e.getMessage());
+            log.error("Failed to evaluate evidence for query '{}': {}", query, e.getMessage(), e);
             return new EvidenceQuality(true, 1.0, "Error during evaluation, defaulting to sufficient");
         }
     }
@@ -89,7 +89,7 @@ public class DefaultAnswerVerificationService implements AnswerVerificationServi
             String response = aiChatService.call(AiChatScene.EVALUATION, prompt, context, "eval:faithfulness:" + Integer.toHexString(answer.hashCode()), "system");
             return parseFaithfulnessResult(response);
         } catch (Exception e) {
-            log.warn("Failed to verify faithfulness: {}", e.getMessage());
+            log.error("Failed to verify faithfulness: {}", e.getMessage(), e);
             return new FaithfulnessResult(true, 1.0, "Error during verification");
         }
     }
@@ -110,7 +110,7 @@ public class DefaultAnswerVerificationService implements AnswerVerificationServi
                     root.path("reason").asText("Unknown")
             );
         } catch (Exception e) {
-            log.warn("Failed to parse evidence result: {}, original response: {}", e.getMessage(), response);
+            log.error("Failed to parse evidence result: {}, original response: {}", e.getMessage(), response, e);
             return new EvidenceQuality(true, 0.8, "Parse error");
         }
     }
@@ -124,7 +124,7 @@ public class DefaultAnswerVerificationService implements AnswerVerificationServi
                     root.path("reason").asText("Unknown")
             );
         } catch (Exception e) {
-            log.warn("Failed to parse faithfulness result: {}, original response: {}", e.getMessage(), response);
+            log.error("Failed to parse faithfulness result: {}, original response: {}", e.getMessage(), response, e);
             return new FaithfulnessResult(true, 0.8, "Parse error");
         }
     }

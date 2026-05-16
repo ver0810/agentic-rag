@@ -91,7 +91,9 @@ public class PythonPdfDocumentParser implements DocumentParser {
         Path tempDir = Files.createTempDirectory("agenticrag-python-pdf-");
         try {
             Path pdfPath = tempDir.resolve("input.pdf");
-            Files.copy(inputStream, pdfPath);
+            try (inputStream) {
+                Files.copy(inputStream, pdfPath);
+            }
             Path imagesDir = tempDir.resolve("pages");
             Files.createDirectories(imagesDir);
             Map<String, Object> payload = extractNativePayload(pdfPath, imagesDir);

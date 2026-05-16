@@ -2,6 +2,7 @@ package com.agenticrag.infrastructure.vector;
 
 import com.agenticrag.infra.ai.port.vector.VectorIndexPort;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -185,7 +186,7 @@ public class PgVectorIndexAdapter implements VectorIndexPort {
             return Map.of();
         }
         try {
-            return objectMapper.readValue(json, Map.class);
+            return objectMapper.readValue(json, new TypeReference<>() {});
         } catch (JsonProcessingException e) {
             return Map.of();
         }

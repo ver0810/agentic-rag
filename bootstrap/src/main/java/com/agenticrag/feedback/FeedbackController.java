@@ -25,13 +25,15 @@ public class FeedbackController {
     @GetMapping
     public ResponseEntity<List<FeedbackEntity>> list(
             @RequestParam(required = false) String kbId,
-            @RequestParam(required = false) Integer limit) {
-        return ResponseEntity.ok(feedbackService.list(kbId, limit));
+            @RequestParam(required = false) Integer limit,
+            @CurrentUser String userId) {
+        return ResponseEntity.ok(feedbackService.list(kbId, limit, userId));
     }
 
     @GetMapping("/summary")
     public ResponseEntity<FeedbackService.FeedbackSummaryDTO> summary(
-            @RequestParam(required = false) String kbId) {
-        return ResponseEntity.ok(feedbackService.getSummary(kbId));
+            @RequestParam(required = false) String kbId,
+            @CurrentUser String userId) {
+        return ResponseEntity.ok(feedbackService.getSummary(kbId, userId));
     }
 }

@@ -303,26 +303,32 @@ public class DefaultRagQueryService implements RagQueryService {
 
         List<VectorIndexPort.SearchResult> finalResults = new ArrayList<>();
         
-        // Batch query for each document's required indices
-        for (Map.Entry<String, Set<Integer>> entry : docToIndices.entrySet()) {
-            String docId = entry.getKey();
-            Set<Integer> targetIndices = entry.getValue();
-            String docName = docIdToName.get(docId);
+        // Batch query for all required indices across all documents
+        if (!docToIndices.isEmpty()) {
+            Set<String> allDocIds = docToIndices.keySet();
+            Set<Integer> allIndices = docToIndices.values().stream()
+                    .flatMap(Set::stream)
+                    .collect(Collectors.toSet());
 
-            List<KnowledgeChunkEntity> chunks = knowledgeChunkMapper.selectList(
+            List<KnowledgeChunkEntity> allChunks = knowledgeChunkMapper.selectList(
                     new LambdaQueryWrapper<KnowledgeChunkEntity>()
-                            .eq(KnowledgeChunkEntity::getDocId, docId)
-                            .in(KnowledgeChunkEntity::getChunkIndex, targetIndices)
+                            .in(KnowledgeChunkEntity::getDocId, allDocIds)
+                            .in(KnowledgeChunkEntity::getChunkIndex, allIndices)
                             .orderByAsc(KnowledgeChunkEntity::getChunkIndex)
             );
-
-            for (KnowledgeChunkEntity chunk : chunks) {
-                finalResults.add(new SearchResultView(
-                        chunk.getId(),
-                        chunk.getContent(),
-                        1.0f,
-                        Map.of("docId", docId, "chunkIndex", chunk.getChunkIndex(), "docName", docName != null ? docName : "Unknown")
-                ));
+            
+            for (KnowledgeChunkEntity chunk : allChunks) {
+                // Filter out chunks that don't match the specific document's required indices
+                Set<Integer> requiredIndices = docToIndices.get(chunk.getDocId());
+                if (requiredIndices != null && requiredIndices.contains(chunk.getChunkIndex())) {
+                    String docName = docIdToName.get(chunk.getDocId());
+                    finalResults.add(new SearchResultView(
+                            chunk.getId(),
+                            chunk.getContent(),
+                            1.0f,
+                            Map.of("docId", chunk.getDocId(), "chunkIndex", chunk.getChunkIndex(), "docName", docName != null ? docName : "Unknown")
+                    ));
+                }
             }
         }
 

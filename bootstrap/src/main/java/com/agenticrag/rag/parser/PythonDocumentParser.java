@@ -97,7 +97,10 @@ public class PythonDocumentParser implements DocumentParser {
     }
 
     private StructuredParseResult invokePythonService(InputStream inputStream, String fileExtension, String strategy) throws IOException {
-        byte[] fileBytes = inputStream.readAllBytes();
+        byte[] fileBytes;
+        try (inputStream) {
+            fileBytes = inputStream.readAllBytes();
+        }
 
         // Build multipart request
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
