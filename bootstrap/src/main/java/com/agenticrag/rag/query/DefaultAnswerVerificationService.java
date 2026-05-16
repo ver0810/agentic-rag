@@ -4,6 +4,8 @@ import com.agenticrag.infra.ai.model.AiChatScene;
 import com.agenticrag.infra.ai.model.AiRuntimeContext;
 import com.agenticrag.infra.ai.port.vector.VectorIndexPort;
 import com.agenticrag.infra.ai.service.AiChatService;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -49,9 +51,11 @@ public class DefaultAnswerVerificationService implements AnswerVerificationServi
             """;
 
     private final AiChatService aiChatService;
+    private final ObjectMapper objectMapper;
 
-    public DefaultAnswerVerificationService(@Lazy AiChatService aiChatService) {
+    public DefaultAnswerVerificationService(@Lazy AiChatService aiChatService, ObjectMapper objectMapper) {
         this.aiChatService = aiChatService;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -99,46 +103,43 @@ public class DefaultAnswerVerificationService implements AnswerVerificationServi
 
     private EvidenceQuality parseEvidenceResult(String response) {
         try {
-            // Simplified parsing for demo. In production use Jackson.
-            boolean sufficient = response.contains("\"sufficient\": true");
-            double score = extractScore(response);
-            String reason = extractReason(response);
-            return new EvidenceQuality(sufficient, score, reason);
+            JsonNode root = objectMapper.readTree(cleanJsonResponse(response));
+            return new EvidenceQuality(
+                    root.path("sufficient").asBoolean(true),
+                    root.path("score").asDouble(0.8),
+                    root.path("reason").asText("Unknown")
+            );
         } catch (Exception e) {
+            log.warn("Failed to parse evidence result: {}, original response: {}", e.getMessage(), response);
             return new EvidenceQuality(true, 0.8, "Parse error");
         }
     }
 
     private FaithfulnessResult parseFaithfulnessResult(String response) {
         try {
-            boolean faithful = response.contains("\"faithful\": true");
-            double score = extractScore(response);
-            String reason = extractReason(response);
-            return new FaithfulnessResult(faithful, score, reason);
+            JsonNode root = objectMapper.readTree(cleanJsonResponse(response));
+            return new FaithfulnessResult(
+                    root.path("faithful").asBoolean(true),
+                    root.path("score").asDouble(0.8),
+                    root.path("reason").asText("Unknown")
+            );
         } catch (Exception e) {
+            log.warn("Failed to parse faithfulness result: {}, original response: {}", e.getMessage(), response);
             return new FaithfulnessResult(true, 0.8, "Parse error");
         }
     }
 
-    private double extractScore(String json) {
-        try {
-            int start = json.indexOf("\"score\":") + 8;
-            int end = json.indexOf(",", start);
-            if (end == -1) end = json.indexOf("}", start);
-            return Double.parseDouble(json.substring(start, end).trim());
-        } catch (Exception e) {
-            return 0.5;
+    private String cleanJsonResponse(String response) {
+        if (response == null) return "";
+        String cleaned = response.trim();
+        if (cleaned.startsWith("```json")) {
+            cleaned = cleaned.substring(7);
+        } else if (cleaned.startsWith("```")) {
+            cleaned = cleaned.substring(3);
         }
-    }
-
-    private String extractReason(String json) {
-        try {
-            int start = json.indexOf("\"reason\":") + 9;
-            int end = json.lastIndexOf("\"");
-            if (start < end) {
-                return json.substring(start + 1, end).trim();
-            }
-        } catch (Exception ignored) {}
-        return "Unknown";
+        if (cleaned.endsWith("```")) {
+            cleaned = cleaned.substring(0, cleaned.length() - 3);
+        }
+        return cleaned.trim();
     }
 }

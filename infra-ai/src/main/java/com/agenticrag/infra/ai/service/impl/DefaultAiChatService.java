@@ -28,7 +28,7 @@ public class DefaultAiChatService implements AiChatService {
     private final ChatMemory chatMemory;
     private final Cache<String, ChatClient> chatClients = Caffeine.newBuilder()
             .expireAfterWrite(10, TimeUnit.MINUTES)
-            .maximumSize(3)
+            .maximumSize(100)
             .build();
 
     public DefaultAiChatService(ChatModel chatModel,

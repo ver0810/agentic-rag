@@ -2,6 +2,8 @@ package com.agenticrag.infrastructure.reranker;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import java.net.http.HttpClient;
+import org.springframework.retry.support.RetryTemplate;
 
 import java.lang.reflect.Field;
 
@@ -15,7 +17,9 @@ class DashScopeRerankerAdapterTests {
                 null,
                 "test-key",
                 "qwen3-rerank",
-                new ObjectMapper());
+                new ObjectMapper(),
+                HttpClient.newHttpClient(),
+                new RetryTemplate());
 
         assertEquals(
                 "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank",
@@ -28,7 +32,9 @@ class DashScopeRerankerAdapterTests {
                 "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-reranking/text-reranking",
                 "test-key",
                 "qwen3-rerank",
-                new ObjectMapper());
+                new ObjectMapper(),
+                HttpClient.newHttpClient(),
+                new RetryTemplate());
 
         assertEquals(
                 "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank",

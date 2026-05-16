@@ -4,6 +4,7 @@ import com.agenticrag.infra.ai.port.reranker.RerankerPort;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.retry.support.RetryTemplate;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -24,15 +25,17 @@ public class CrossEncoderRerankerAdapter implements RerankerPort {
     private final String model;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
+    private final RetryTemplate retryTemplate;
 
-    public CrossEncoderRerankerAdapter(String apiUrl, String apiKey, String model, ObjectMapper objectMapper) {
+    public CrossEncoderRerankerAdapter(String apiUrl, String apiKey, String model, 
+                                      ObjectMapper objectMapper, HttpClient httpClient,
+                                      RetryTemplate retryTemplate) {
         this.apiUrl = apiUrl;
         this.apiKey = apiKey;
         this.model = (model != null && !model.isBlank()) ? model : "bge-reranker-v2-m3";
         this.objectMapper = objectMapper;
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .build();
+        this.httpClient = httpClient;
+        this.retryTemplate = retryTemplate;
     }
 
     @Override
@@ -59,7 +62,9 @@ public class CrossEncoderRerankerAdapter implements RerankerPort {
                     .timeout(Duration.ofSeconds(30))
                     .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = retryTemplate.execute(context -> 
+                httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+            );
 
             if (response.statusCode() != 200) {
                 log.error("Cross-encoder API returned {}: {}", response.statusCode(), response.body());

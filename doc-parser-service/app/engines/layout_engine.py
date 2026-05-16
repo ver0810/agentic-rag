@@ -46,111 +46,115 @@ class LayoutRecognizer:
     def is_loaded(self) -> bool:
         return self.session is not None
 
-    def preprocess(self, image: np.ndarray) -> tuple[np.ndarray, dict]:
-        ori_h, ori_w = image.shape[:2]
+    def preprocess(self, images: list[np.ndarray]) -> tuple[np.ndarray, list[dict]]:
+        batch_imgs = []
+        batch_scales = []
         target_h, target_w = self.input_shape
 
-        # Calculate resize ratio
-        ratio = min(target_h / ori_h, target_w / ori_w)
-        new_h, new_w = int(ori_h * ratio), int(ori_w * ratio)
+        for image in images:
+            ori_h, ori_w = image.shape[:2]
+            # Calculate resize ratio
+            ratio = min(target_h / ori_h, target_w / ori_w)
+            new_h, new_w = int(ori_h * ratio), int(ori_w * ratio)
 
-        # Resize
-        img = cv2.resize(image, (new_w, new_h))
+            # Resize
+            img = cv2.resize(image, (new_w, new_h))
 
-        # Pad
-        pad_h = target_h - new_h
-        pad_w = target_w - new_w
-        img = cv2.copyMakeBorder(
-            img,
-            0, pad_h, 0, pad_w,
-            cv2.BORDER_CONSTANT,
-            value=(114, 114, 114),
-        )
+            # Pad
+            pad_h = target_h - new_h
+            pad_w = target_w - new_w
+            img = cv2.copyMakeBorder(
+                img,
+                0, pad_h, 0, pad_w,
+                cv2.BORDER_CONSTANT,
+                value=(114, 114, 114),
+            )
 
-        # Normalize and convert to CHW
-        img = img.astype(np.float32) / 255.0
-        img = img.transpose(2, 0, 1)[np.newaxis, :, :, :].astype(np.float32)
-
-        scale_info = {
-            "ratio": ratio,
-            "ori_h": ori_h,
-            "ori_w": ori_w,
-            "new_h": new_h,
-            "new_w": new_w,
-            "pad_w": pad_w,
-            "pad_h": pad_h,
-        }
-        return img, scale_info
-
-    def postprocess(self, output: np.ndarray, scale_info: dict, threshold: float = 0.25) -> list[dict]:
-        predictions = np.squeeze(output)
-
-        if predictions.ndim == 1:
-            predictions = predictions[np.newaxis, :]
-
-        # Handle different output formats
-        if predictions.shape[0] > predictions.shape[1]:
-            predictions = predictions.T
-
-        boxes = []
-        if predictions.shape[1] < 5:
-            return boxes
-
-        # Extract boxes and scores
-        scores = np.max(predictions[:, 4:], axis=1)
-        class_ids = np.argmax(predictions[:, 4:], axis=1)
-
-        # Filter by threshold
-        mask = scores > threshold
-        scores = scores[mask]
-        class_ids = class_ids[mask]
-        pred_boxes = predictions[mask, :4]
-
-        # NMS for each class
-        unique_classes = np.unique(class_ids)
-        keep_indices = []
-
-        for cls_id in unique_classes:
-            cls_mask = class_ids == cls_id
-            cls_boxes = pred_boxes[cls_mask]
-            cls_scores = scores[cls_mask]
-            cls_indices = np.where(cls_mask)[0]
-
-            # Simple NMS
-            keep = self._nms(cls_boxes, cls_scores, iou_threshold=0.45)
-            keep_indices.extend(cls_indices[keep])
-
-        # Build results
-        for idx in keep_indices:
-            box = pred_boxes[idx]
-            x1, y1, x2, y2 = box
-
-            # Scale back to original size
-            ratio = scale_info["ratio"]
-            x1 = (x1 - scale_info["pad_w"] / 2) / ratio
-            y1 = (y1 - scale_info["pad_h"] / 2) / ratio
-            x2 = (x2 - scale_info["pad_w"] / 2) / ratio
-            y2 = (y2 - scale_info["pad_h"] / 2) / ratio
-
-            # Clip to image bounds
-            x1 = max(0, min(x1, scale_info["ori_w"]))
-            y1 = max(0, min(y1, scale_info["ori_h"]))
-            x2 = max(0, min(x2, scale_info["ori_w"]))
-            y2 = max(0, min(y2, scale_info["ori_h"]))
-
-            if x2 - x1 < 5 or y2 - y1 < 5:
-                continue
-
-            cls_id = class_ids[idx]
-            label = self.LABELS[cls_id] if cls_id < len(self.LABELS) else "unknown"
-
-            boxes.append({
-                "type": label.lower(),
-                "bbox": [float(x1), float(y1), float(x2), float(y2)],
-                "score": float(scores[idx]),
+            # Normalize and convert to CHW
+            img = img.astype(np.float32) / 255.0
+            img = img.transpose(2, 0, 1)
+            batch_imgs.append(img)
+            
+            batch_scales.append({
+                "ratio": ratio,
+                "ori_h": ori_h,
+                "ori_w": ori_w,
+                "new_h": new_h,
+                "new_w": new_w,
+                "pad_w": pad_w,
+                "pad_h": pad_h,
             })
 
-        return boxes
+        return np.stack(batch_imgs), batch_scales
+
+    def postprocess(self, batch_output: np.ndarray, batch_scales: list[dict], threshold: float = 0.25) -> list[list[dict]]:
+        batch_results = []
+        
+        for i in range(len(batch_output)):
+            predictions = batch_output[i]
+            scale_info = batch_scales[i]
+
+            if predictions.ndim == 1:
+                predictions = predictions[np.newaxis, :]
+
+            if predictions.shape[0] > predictions.shape[1] and predictions.shape[0] > 100:
+                predictions = predictions.T
+
+            boxes = []
+            if predictions.shape[1] < 5:
+                batch_results.append(boxes)
+                continue
+
+            scores = np.max(predictions[:, 4:], axis=1)
+            class_ids = np.argmax(predictions[:, 4:], axis=1)
+
+            mask = scores > threshold
+            scores = scores[mask]
+            class_ids = class_ids[mask]
+            pred_boxes = predictions[mask, :4]
+
+            unique_classes = np.unique(class_ids)
+            keep_indices = []
+
+            for cls_id in unique_classes:
+                cls_mask = class_ids == cls_id
+                cls_boxes = pred_boxes[cls_mask]
+                cls_scores = scores[cls_mask]
+                cls_indices = np.where(cls_mask)[0]
+
+                keep = self._nms(cls_boxes, cls_scores, iou_threshold=0.45)
+                keep_indices.extend(cls_indices[keep])
+
+            for idx in keep_indices:
+                box = pred_boxes[idx]
+                x1, y1, x2, y2 = box
+
+                ratio = scale_info["ratio"]
+                x1 = (x1 - scale_info["pad_w"] / 2) / ratio
+                y1 = (y1 - scale_info["pad_h"] / 2) / ratio
+                x2 = (x2 - scale_info["pad_w"] / 2) / ratio
+                y2 = (y2 - scale_info["pad_h"] / 2) / ratio
+
+                x1 = max(0, min(x1, scale_info["ori_w"]))
+                y1 = max(0, min(y1, scale_info["ori_h"]))
+                x2 = max(0, min(x2, scale_info["ori_w"]))
+                y2 = max(0, min(y2, scale_info["ori_h"]))
+
+                if x2 - x1 < 5 or y2 - y1 < 5:
+                    continue
+
+                cls_id = class_ids[idx]
+                label = self.LABELS[cls_id] if cls_id < len(self.LABELS) else "unknown"
+
+                boxes.append({
+                    "type": label.lower(),
+                    "bbox": [float(x1), float(y1), float(x2), float(y2)],
+                    "score": float(scores[idx]),
+                })
+            
+            batch_results.append(self.sort_layouts(boxes))
+
+        return batch_results
 
     def _nms(self, boxes: np.ndarray, scores: np.ndarray, iou_threshold: float = 0.45) -> np.ndarray:
         if len(boxes) == 0:
@@ -214,20 +218,23 @@ class LayoutRecognizer:
 
         return result
 
-    def __call__(self, image: np.ndarray, threshold: float = 0.25) -> list[dict]:
+    def __call__(self, images: list[np.ndarray] | np.ndarray, threshold: float = 0.25) -> list[list[dict]] | list[dict]:
         if not self.is_loaded:
             logger.warning("Layout model not loaded, returning empty result")
-            return []
+            return [] if isinstance(images, list) else []
 
+        is_batch = isinstance(images, list)
+        input_list = images if is_batch else [images]
+        
         start = time.time()
 
-        img, scale_info = self.preprocess(image)
+        batch_img, batch_scales = self.preprocess(input_list)
         input_name = self.session.get_inputs()[0].name
-        output = self.session.run(None, {input_name: img})
+        output = self.session.run(None, {input_name: batch_img})
 
-        layouts = self.postprocess(output[0], scale_info, threshold)
-        layouts = self.sort_layouts(layouts)
-
+        batch_layouts = self.postprocess(output[0], batch_scales, threshold)
+        
         elapsed = time.time() - start
-        logger.debug(f"Layout recognition completed: {len(layouts)} layouts in {elapsed:.2f}s")
-        return layouts
+        logger.debug(f"Layout recognition completed: processed {len(input_list)} images in {elapsed:.2f}s")
+        
+        return batch_layouts if is_batch else batch_layouts[0]

@@ -20,21 +20,31 @@ public class RerankerConfiguration {
 
     @Bean
     @ConditionalOnProperty(name = "agenticrag.ai.rag.reranker-type", havingValue = "cross-encoder")
-    public RerankerPort crossEncoderReranker(RagProperties ragProperties, ObjectMapper objectMapper) {
+    public RerankerPort crossEncoderReranker(RagProperties ragProperties, ObjectMapper objectMapper,
+                                            java.net.http.HttpClient httpClient,
+                                            org.springframework.retry.support.RetryTemplate retryTemplate) {
         return new CrossEncoderRerankerAdapter(
                 ragProperties.getRerankerApiUrl(),
                 ragProperties.getRerankerApiKey(),
                 ragProperties.getRerankerModel(),
-                objectMapper);
+                objectMapper,
+                httpClient,
+                retryTemplate
+        );
     }
 
     @Bean
     @ConditionalOnProperty(name = "agenticrag.ai.rag.reranker-type", havingValue = "dashscope")
-    public RerankerPort dashscopeReranker(RagProperties ragProperties, ObjectMapper objectMapper) {
+    public RerankerPort dashscopeReranker(RagProperties ragProperties, ObjectMapper objectMapper,
+                                         java.net.http.HttpClient httpClient,
+                                         org.springframework.retry.support.RetryTemplate retryTemplate) {
         return new DashScopeRerankerAdapter(
                 ragProperties.getRerankerApiUrl(),
                 ragProperties.getRerankerApiKey(),
                 ragProperties.getRerankerModel(),
-                objectMapper);
+                objectMapper,
+                httpClient,
+                retryTemplate
+        );
     }
 }

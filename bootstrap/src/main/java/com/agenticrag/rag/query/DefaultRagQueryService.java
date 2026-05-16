@@ -14,6 +14,8 @@ import com.agenticrag.knowledge.dao.entity.KnowledgeChunkEntity;
 import com.agenticrag.knowledge.dao.mapper.KnowledgeBaseMapper;
 import com.agenticrag.knowledge.dao.mapper.KnowledgeChunkMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -32,6 +34,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -63,6 +67,12 @@ public class DefaultRagQueryService implements RagQueryService {
     private final KnowledgeChunkMapper knowledgeChunkMapper;
     private final AnswerVerificationService answerVerificationService;
     private final RagCacheService ragCacheService;
+    private final Executor applicationTaskExecutor;
+
+    private final Cache<String, KnowledgeBaseSettings> kbSettingsCache = Caffeine.newBuilder()
+            .expireAfterWrite(5, TimeUnit.MINUTES)
+            .maximumSize(500)
+            .build();
 
     public DefaultRagQueryService(KnowledgeEmbeddingPort embeddingPort,
                                   VectorIndexPort vectorIndexPort,
@@ -75,7 +85,8 @@ public class DefaultRagQueryService implements RagQueryService {
                                   KnowledgeBaseMapper knowledgeBaseMapper,
                                   KnowledgeChunkMapper knowledgeChunkMapper,
                                   AnswerVerificationService answerVerificationService,
-                                  RagCacheService ragCacheService) {
+                                  RagCacheService ragCacheService,
+                                  @org.springframework.beans.factory.annotation.Qualifier("applicationTaskExecutor") Executor applicationTaskExecutor) {
         this.embeddingPort = embeddingPort;
         this.vectorIndexPort = vectorIndexPort;
         this.chatService = chatService;
@@ -88,6 +99,7 @@ public class DefaultRagQueryService implements RagQueryService {
         this.knowledgeChunkMapper = knowledgeChunkMapper;
         this.answerVerificationService = answerVerificationService;
         this.ragCacheService = ragCacheService;
+        this.applicationTaskExecutor = applicationTaskExecutor;
     }
 
     @Override
@@ -148,7 +160,7 @@ public class DefaultRagQueryService implements RagQueryService {
                     } catch (Exception e) {
                         log.error("Async faithfulness verification failed for trace {}: {}", traceId, e.getMessage());
                     }
-                });
+                }, applicationTaskExecutor);
             }
 
             completeTrace(traceId, retrievalResult, answer, estimatedPromptTokens, estimatedAnswerTokens);
@@ -217,7 +229,7 @@ public class DefaultRagQueryService implements RagQueryService {
                                     log.error("Async faithfulness verification failed for trace {}: {}", traceId, e.getMessage());
                                     return null;
                                 }
-                            })).filter(java.util.Objects::nonNull);
+                            }, applicationTaskExecutor)).filter(java.util.Objects::nonNull);
                         }
                         return Mono.empty();
                     }),
@@ -257,50 +269,53 @@ public class DefaultRagQueryService implements RagQueryService {
     }
 
     private List<? extends VectorIndexPort.SearchResult> expandByWindow(List<? extends VectorIndexPort.SearchResult> results) {
-        Map<String, List<VectorIndexPort.SearchResult>> docs = new HashMap<>();
+        Map<String, Set<Integer>> docToIndices = new HashMap<>();
+        Map<String, String> docIdToName = new HashMap<>();
+
         for (VectorIndexPort.SearchResult r : results) {
             String docId = (String) r.metadata().get("docId");
             if (docId != null) {
-                docs.computeIfAbsent(docId, k -> new ArrayList<>()).add(r);
-            }
-        }
-
-        List<VectorIndexPort.SearchResult> finalResults = new ArrayList<>();
-        int window = ragProperties.getContextWindowSize();
-
-        for (Map.Entry<String, List<VectorIndexPort.SearchResult>> entry : docs.entrySet()) {
-            String docId = entry.getKey();
-            List<VectorIndexPort.SearchResult> originalChunks = entry.getValue();
-            Set<Integer> targetIndices = new HashSet<>();
-
-            for (VectorIndexPort.SearchResult r : originalChunks) {
+                docIdToName.putIfAbsent(docId, (String) r.metadata().get("docName"));
                 Object idxObj = r.metadata().get("chunkIndex");
                 if (idxObj instanceof Number num) {
                     int idx = num.intValue();
+                    int window = ragProperties.getContextWindowSize();
+                    Set<Integer> indices = docToIndices.computeIfAbsent(docId, k -> new HashSet<>());
                     for (int i = idx - window; i <= idx + window; i++) {
                         if (i >= 0) {
-                            targetIndices.add(i);
+                            indices.add(i);
                         }
                     }
                 }
             }
+        }
 
-            if (!targetIndices.isEmpty()) {
-                List<KnowledgeChunkEntity> chunks = knowledgeChunkMapper.selectList(
-                        new LambdaQueryWrapper<KnowledgeChunkEntity>()
-                                .eq(KnowledgeChunkEntity::getDocId, docId)
-                                .in(KnowledgeChunkEntity::getChunkIndex, targetIndices)
-                                .orderByAsc(KnowledgeChunkEntity::getChunkIndex)
-                );
+        if (docToIndices.isEmpty()) {
+            return results;
+        }
 
-                for (KnowledgeChunkEntity chunk : chunks) {
-                    finalResults.add(new SearchResultView(
-                            chunk.getId(),
-                            chunk.getContent(),
-                            1.0f, // Use dummy score for expanded content
-                            Map.of("docId", docId, "chunkIndex", chunk.getChunkIndex(), "docName", originalChunks.get(0).metadata().get("docName"))
-                    ));
-                }
+        List<VectorIndexPort.SearchResult> finalResults = new ArrayList<>();
+        
+        // Batch query for each document's required indices
+        for (Map.Entry<String, Set<Integer>> entry : docToIndices.entrySet()) {
+            String docId = entry.getKey();
+            Set<Integer> targetIndices = entry.getValue();
+            String docName = docIdToName.get(docId);
+
+            List<KnowledgeChunkEntity> chunks = knowledgeChunkMapper.selectList(
+                    new LambdaQueryWrapper<KnowledgeChunkEntity>()
+                            .eq(KnowledgeChunkEntity::getDocId, docId)
+                            .in(KnowledgeChunkEntity::getChunkIndex, targetIndices)
+                            .orderByAsc(KnowledgeChunkEntity::getChunkIndex)
+            );
+
+            for (KnowledgeChunkEntity chunk : chunks) {
+                finalResults.add(new SearchResultView(
+                        chunk.getId(),
+                        chunk.getContent(),
+                        1.0f,
+                        Map.of("docId", docId, "chunkIndex", chunk.getChunkIndex(), "docName", docName != null ? docName : "Unknown")
+                ));
             }
         }
 
@@ -308,13 +323,29 @@ public class DefaultRagQueryService implements RagQueryService {
     }
 
     private List<? extends VectorIndexPort.SearchResult> expandByParent(List<? extends VectorIndexPort.SearchResult> results) {
-        // Simple implementation: if parentId exists in metadata, fetch it.
-        // Otherwise, fallback to original.
+        Set<String> parentIds = new HashSet<>();
+        for (VectorIndexPort.SearchResult r : results) {
+            String parentId = (String) r.metadata().get("parentId");
+            if (parentId != null) {
+                parentIds.add(parentId);
+            }
+        }
+
+        Map<String, KnowledgeChunkEntity> parentMap = new HashMap<>();
+        if (!parentIds.isEmpty()) {
+            List<KnowledgeChunkEntity> parents = knowledgeChunkMapper.selectBatchIds(parentIds);
+            if (parents != null) {
+                for (KnowledgeChunkEntity parent : parents) {
+                    parentMap.put(parent.getId(), parent);
+                }
+            }
+        }
+
         List<VectorIndexPort.SearchResult> finalResults = new ArrayList<>();
         for (VectorIndexPort.SearchResult r : results) {
             String parentId = (String) r.metadata().get("parentId");
             if (parentId != null) {
-                KnowledgeChunkEntity parent = knowledgeChunkMapper.selectById(parentId);
+                KnowledgeChunkEntity parent = parentMap.get(parentId);
                 if (parent != null) {
                     finalResults.add(new SearchResultView(
                             parent.getId(),
@@ -354,7 +385,7 @@ public class DefaultRagQueryService implements RagQueryService {
 
             if (ragProperties.isParallelRetrievalEnabled() && queries.size() > 1) {
                 List<CompletableFuture<QueryResultPair>> futures = queries.stream()
-                        .map(q -> CompletableFuture.supplyAsync(() -> performSingleRetrieve(q, effectiveTopK, effectiveThreshold, filter)))
+                        .map(q -> CompletableFuture.supplyAsync(() -> performSingleRetrieve(q, effectiveTopK, effectiveThreshold, filter), applicationTaskExecutor))
                         .toList();
 
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
@@ -479,29 +510,31 @@ public class DefaultRagQueryService implements RagQueryService {
                     ragProperties.getKeywordTopK(),
                     defaultPromptTemplate());
         }
-        KnowledgeBaseEntity kb = knowledgeBaseMapper.selectOne(
-                new LambdaQueryWrapper<KnowledgeBaseEntity>()
-                        .eq(KnowledgeBaseEntity::getId, kbId)
-                        .eq(KnowledgeBaseEntity::getDeleted, 0)
-                        .select(
-                                KnowledgeBaseEntity::getSimilarityThreshold,
-                                KnowledgeBaseEntity::getVectorTopK,
-                                KnowledgeBaseEntity::getKeywordTopK,
-                                KnowledgeBaseEntity::getPromptTemplate)
-                        .last("limit 1"));
-        return new KnowledgeBaseSettings(
-                kb != null && kb.getSimilarityThreshold() != null
-                        ? kb.getSimilarityThreshold()
-                        : ragProperties.getSimilarityThreshold(),
-                kb != null && kb.getVectorTopK() != null && kb.getVectorTopK() > 0
-                        ? kb.getVectorTopK()
-                        : ragProperties.getVectorTopK(),
-                kb != null && kb.getKeywordTopK() != null && kb.getKeywordTopK() > 0
-                        ? kb.getKeywordTopK()
-                        : ragProperties.getKeywordTopK(),
-                kb != null && StringUtils.hasText(kb.getPromptTemplate())
-                        ? kb.getPromptTemplate()
-                        : defaultPromptTemplate());
+        return kbSettingsCache.get(kbId, id -> {
+            KnowledgeBaseEntity kb = knowledgeBaseMapper.selectOne(
+                    new LambdaQueryWrapper<KnowledgeBaseEntity>()
+                            .eq(KnowledgeBaseEntity::getId, id)
+                            .eq(KnowledgeBaseEntity::getDeleted, 0)
+                            .select(
+                                    KnowledgeBaseEntity::getSimilarityThreshold,
+                                    KnowledgeBaseEntity::getVectorTopK,
+                                    KnowledgeBaseEntity::getKeywordTopK,
+                                    KnowledgeBaseEntity::getPromptTemplate)
+                            .last("limit 1"));
+            return new KnowledgeBaseSettings(
+                    kb != null && kb.getSimilarityThreshold() != null
+                            ? kb.getSimilarityThreshold()
+                            : ragProperties.getSimilarityThreshold(),
+                    kb != null && kb.getVectorTopK() != null && kb.getVectorTopK() > 0
+                            ? kb.getVectorTopK()
+                            : ragProperties.getVectorTopK(),
+                    kb != null && kb.getKeywordTopK() != null && kb.getKeywordTopK() > 0
+                            ? kb.getKeywordTopK()
+                            : ragProperties.getKeywordTopK(),
+                    kb != null && StringUtils.hasText(kb.getPromptTemplate())
+                            ? kb.getPromptTemplate()
+                            : defaultPromptTemplate());
+        });
     }
 
     private String defaultPromptTemplate() {

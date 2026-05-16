@@ -48,16 +48,18 @@ public class PgVectorIndexAdapter implements VectorIndexPort {
         String vectorStr = formatVector(queryEmbedding);
 
         StringBuilder sql = new StringBuilder(
-                "SELECT id, content, 1 - (embedding <=> ?::vector) as score, metadata " +
-                        "FROM t_knowledge_vector");
+                "WITH query AS (SELECT ?::vector AS q_vec) " +
+                "SELECT id, content, 1 - (embedding <=> q_vec) as score, metadata " +
+                "FROM t_knowledge_vector, query");
+        
         Object[] args;
         if (filter != null && !filter.isEmpty()) {
             sql.append(" WHERE metadata @> ?::jsonb");
-            sql.append(" ORDER BY embedding <=> ?::vector LIMIT ?");
-            args = new Object[]{vectorStr, serializeMetadata(filter), vectorStr, topK};
+            sql.append(" ORDER BY embedding <=> q_vec LIMIT ?");
+            args = new Object[]{vectorStr, serializeMetadata(filter), topK};
         } else {
-            sql.append(" ORDER BY embedding <=> ?::vector LIMIT ?");
-            args = new Object[]{vectorStr, vectorStr, topK};
+            sql.append(" ORDER BY embedding <=> q_vec LIMIT ?");
+            args = new Object[]{vectorStr, topK};
         }
 
         return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> {

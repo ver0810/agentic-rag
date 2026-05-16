@@ -4,6 +4,7 @@ import com.agenticrag.infra.ai.port.reranker.RerankerPort;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.retry.support.RetryTemplate;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -26,15 +27,17 @@ public class DashScopeRerankerAdapter implements RerankerPort {
     private final String model;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
+    private final RetryTemplate retryTemplate;
 
-    public DashScopeRerankerAdapter(String apiUrl, String apiKey, String model, ObjectMapper objectMapper) {
+    public DashScopeRerankerAdapter(String apiUrl, String apiKey, String model, 
+                                   ObjectMapper objectMapper, HttpClient httpClient,
+                                   RetryTemplate retryTemplate) {
         this.apiUrl = normalizeApiUrl(apiUrl);
         this.apiKey = apiKey;
         this.model = (model != null && !model.isBlank()) ? model : "gte-rerank-v2";
         this.objectMapper = objectMapper;
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .build();
+        this.httpClient = httpClient;
+        this.retryTemplate = retryTemplate;
     }
 
     @Override
@@ -67,7 +70,9 @@ public class DashScopeRerankerAdapter implements RerankerPort {
                     .timeout(Duration.ofSeconds(30))
                     .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = retryTemplate.execute(context -> 
+                httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+            );
 
             if (response.statusCode() != 200) {
                 log.error("DashScope rerank API returned {}: {}", response.statusCode(), response.body());
