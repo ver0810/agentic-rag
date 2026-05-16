@@ -68,6 +68,8 @@ export default function ChatInterface() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const isSubmittingRef = useRef(false);
   const navigate = useNavigate();
 
   const handleScroll = useCallback(() => {
@@ -142,7 +144,7 @@ export default function ChatInterface() {
   }, []);
 
   const fetchBootstrapData = useCallback(async () => {
-    await Promise.all([
+    await Promise.allSettled([
       fetchAiSettings(),
       fetchConfiguredModels(),
       fetchSessions(),
@@ -156,6 +158,12 @@ export default function ChatInterface() {
     }
     void fetchBootstrapData();
   }, [user, fetchBootstrapData]);
+
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     if (isLoading) {
@@ -321,10 +329,11 @@ export default function ChatInterface() {
 
   const handleSubmit = useCallback(async (event: FormEvent) => {
     event.preventDefault();
-    if (!input.trim() || isLoading) {
+    if (!input.trim() || isSubmittingRef.current) {
       return;
     }
 
+    isSubmittingRef.current = true;
     const nextInput = input;
     setMessages((prev) => [
       ...prev,
@@ -339,6 +348,9 @@ export default function ChatInterface() {
     ]);
     setInput('');
     setIsLoading(true);
+
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
     try {
       let sessionId = currentSessionId;
@@ -376,15 +388,19 @@ export default function ChatInterface() {
             return next;
           });
         },
+        abortController.signal,
       );
 
       if (isNewSession) {
         await fetchSessions();
       }
-    } catch (err) {
-      const error = err as Error;
-      console.error('Error:', error);
-      if (error.message === 'Unauthorized') {
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err ?? 'Unknown error');
+      console.error('Error:', message);
+      if (message === 'Unauthorized') {
         clearAuth();
         navigate('/login');
         return;
@@ -393,14 +409,16 @@ export default function ChatInterface() {
         const next = [...prev];
         next[next.length - 1] = {
           ...next[next.length - 1],
-          content: error.message || 'Error: Failed to get response.',
+          content: message || 'Error: Failed to get response.',
         };
         return next;
       });
     } finally {
       setIsLoading(false);
+      abortControllerRef.current = null;
+      isSubmittingRef.current = false;
     }
-  }, [input, isLoading, currentSessionId, selectedKbId, fetchSessions, navigate]);
+  }, [input, currentSessionId, selectedKbId, fetchSessions, navigate]);
 
   const openSettingsModal = useCallback(() => {
     setShowAddModal(true);

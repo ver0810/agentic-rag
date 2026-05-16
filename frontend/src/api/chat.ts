@@ -94,7 +94,8 @@ export const ChatAPI = {
     conversationId: string, 
     scene?: string, 
     kbId?: string,
-    onUpdate?: (text: string, metadata?: ChatResult, verification?: any) => void
+    onUpdate?: (text: string, metadata?: ChatResult, verification?: any) => void,
+    signal?: AbortSignal
   ) => {
     const url = new URL('/chat/stream', window.location.origin);
     url.searchParams.append('message', message);
@@ -104,7 +105,8 @@ export const ChatAPI = {
 
     const response = await fetch(url.toString(), {
       method: 'POST',
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      signal
     });
 
     if (response.status === 401) {
@@ -123,37 +125,49 @@ export const ChatAPI = {
     let done = false;
     let accumulatedContent = '';
     let currentMetadata: ChatResult | undefined;
+    let buffer = '';
 
     while (!done) {
       const { value, done: doneReading } = await reader.read();
       done = doneReading;
       if (done) break;
 
-      const chunkValue = decoder.decode(value);
-      const lines = chunkValue.split('\n');
-      
-      for (const line of lines) {
-        if (line.startsWith('data:')) {
-          const dataStr = line.substring(5).trim();
-          if (!dataStr) continue;
-          
-          try {
-            const event = JSON.parse(dataStr);
-            if (event.type === 'metadata') {
-              currentMetadata = event.data;
-              if (onUpdate) onUpdate(accumulatedContent, currentMetadata);
-            } else if (event.type === 'chunk') {
-              accumulatedContent += event.data;
-              if (onUpdate) onUpdate(accumulatedContent, currentMetadata);
-            } else if (event.type === 'verification') {
-              if (onUpdate) onUpdate(accumulatedContent, currentMetadata, event.data);
-            } else if (event.type === 'error') {
-              throw new Error(event.data);
-            } else if (event.type === 'done') {
-              done = true;
-            }
-          } catch (e) {
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split('\n\n');
+      buffer = events.pop() || '';
+
+      for (const event of events) {
+        let dataLines: string[] = [];
+        for (const line of event.split('\n')) {
+          if (line.startsWith('data:')) {
+            dataLines.push(line.substring(5).trim());
+          }
+        }
+        if (dataLines.length === 0) continue;
+
+        const dataStr = dataLines.join('\n');
+        if (!dataStr) continue;
+
+        try {
+          const parsed = JSON.parse(dataStr);
+          if (parsed.type === 'metadata') {
+            currentMetadata = parsed.data;
+            if (onUpdate) onUpdate(accumulatedContent, currentMetadata);
+          } else if (parsed.type === 'chunk') {
+            accumulatedContent += parsed.data;
+            if (onUpdate) onUpdate(accumulatedContent, currentMetadata);
+          } else if (parsed.type === 'verification') {
+            if (onUpdate) onUpdate(accumulatedContent, currentMetadata, parsed.data);
+          } else if (parsed.type === 'error') {
+            throw new Error(parsed.data);
+          } else if (parsed.type === 'done') {
+            done = true;
+          }
+        } catch (e) {
+          if (e instanceof Error && e.message !== 'No reader' && !e.message.startsWith('Failed to fetch')) {
             console.warn('Failed to parse SSE event:', e, dataStr);
+          } else {
+            throw e;
           }
         }
       }

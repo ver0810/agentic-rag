@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   FileText,
   Upload,
@@ -26,25 +26,30 @@ export default function KnowledgeBaseView({ kb, onDelete }: KnowledgeBaseViewPro
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasActiveProcessingRef = useRef(false);
 
   useEffect(() => {
     void fetchDocuments();
   }, [kb.id]);
 
   useEffect(() => {
-    const hasActiveProcessing = documents.some((doc) => {
+    hasActiveProcessingRef.current = documents.some((doc) => {
       const status = doc.status?.toLowerCase();
       const taskStatus = latestTask(doc.id)?.status;
       return status === 'queued' || status === 'running' || taskStatus === 'RUNNING' || taskStatus === 'RETRYING';
     });
-    if (!hasActiveProcessing) {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      void fetchDocuments();
-    }, 3000);
-    return () => window.clearInterval(timer);
-  }, [documents, tasksByDocument, kb.id]);
+  });
+
+  useEffect(() => {
+    const checkAndPoll = () => {
+      if (!hasActiveProcessingRef.current) return;
+      const timer = window.setInterval(() => {
+        void fetchDocuments();
+      }, 3000);
+      return () => window.clearInterval(timer);
+    };
+    return checkAndPoll();
+  }, [kb.id]);
 
   const fetchDocuments = async () => {
     setIsLoading(true);
