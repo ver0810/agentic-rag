@@ -5,7 +5,9 @@ import com.agenticrag.infra.ai.port.vector.VectorIndexPort;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.stereotype.Service;
+import org.springframework.util.DigestUtils;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -29,20 +31,22 @@ public class RagCacheService {
     }
 
     public float[] getEmbedding(String text) {
-        float[] cached = embeddingCache.getIfPresent(text);
+        String key = DigestUtils.md5DigestAsHex(text.getBytes(StandardCharsets.UTF_8));
+        float[] cached = embeddingCache.getIfPresent(key);
         if (cached != null) {
             return cached;
         }
-        float[] redis = cachePort.getEmbedding(text);
+        float[] redis = cachePort.getEmbedding(key);
         if (redis != null) {
-            embeddingCache.put(text, redis);
+            embeddingCache.put(key, redis);
         }
         return redis;
     }
 
     public void putEmbedding(String text, float[] embedding) {
-        embeddingCache.put(text, embedding);
-        cachePort.putEmbedding(text, embedding);
+        String key = DigestUtils.md5DigestAsHex(text.getBytes(StandardCharsets.UTF_8));
+        embeddingCache.put(key, embedding);
+        cachePort.putEmbedding(key, embedding);
     }
 
     @SuppressWarnings("unchecked")
@@ -65,6 +69,6 @@ public class RagCacheService {
     }
 
     public static String buildResultCacheKey(String query, String kbId, int topK) {
-        return kbId + ":" + topK + ":" + query.hashCode();
+        return kbId + ":" + topK + ":" + DigestUtils.md5DigestAsHex(query.getBytes(StandardCharsets.UTF_8));
     }
 }

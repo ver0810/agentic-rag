@@ -72,9 +72,14 @@ export default function ChatContent({
         </div>
       ) : (
         <div className="space-y-8 pb-32">
-          {messages.map((message, index) => {
-            const previousUserMessage = [...messages.slice(0, index)].reverse().find((item) => item.role === 'user');
-            const feedbackRating = message.traceId ? feedbackRatings?.[message.traceId] : undefined;
+          {(() => {
+            let lastUserMessage: Message | undefined = undefined;
+            return messages.map((message, index) => {
+              const previousUserMessage = lastUserMessage;
+              if (message.role === 'user') {
+                lastUserMessage = message;
+              }
+              const feedbackRating = message.traceId ? feedbackRatings?.[message.traceId] : undefined;
             return (
               <div
                 key={`${message.role}-${index}`}
@@ -238,7 +243,8 @@ export default function ChatContent({
                 ) : null}
               </div>
             );
-          })}
+            });
+          })()}
           <div ref={messagesEndRef} />
         </div>
       )}

@@ -159,11 +159,13 @@ public class DefaultRagQueryService implements RagQueryService {
                         ragTraceRecorder.completeNode(traceId, faithNodeId, Map.of("faithful", faith.faithful(), "score", faith.score(), "reason", faith.reason()));
                     } catch (Exception e) {
                         log.error("Async faithfulness verification failed for trace {}: {}", traceId, e.getMessage());
+                    } finally {
+                        completeTrace(traceId, finalRetrievalResult, finalAnswer, estimatedPromptTokens, estimatedAnswerTokens);
                     }
                 }, applicationTaskExecutor);
+            } else {
+                completeTrace(traceId, retrievalResult, answer, estimatedPromptTokens, estimatedAnswerTokens);
             }
-
-            completeTrace(traceId, retrievalResult, answer, estimatedPromptTokens, estimatedAnswerTokens);
             
             return new RagQueryResult(
                     answer,
@@ -209,9 +211,11 @@ public class DefaultRagQueryService implements RagQueryService {
                     .map(ChatEvent::chunk)
                     .doOnNext(event -> fullAnswer.append((String) event.data()))
                     .doOnComplete(() -> {
-                        int estimatedAnswerTokens = tokenCostEstimator.estimateTokens(fullAnswer.toString());
                         ragTraceRecorder.completeNode(traceId, generateNodeId, Map.of("answerLength", fullAnswer.length()));
-                        completeTrace(traceId, retrievalResult, fullAnswer.toString(), estimatedPromptTokens, estimatedAnswerTokens);
+                        if (!ragProperties.isSelfRagEnabled()) {
+                            int estimatedAnswerTokens = tokenCostEstimator.estimateTokens(fullAnswer.toString());
+                            completeTrace(traceId, retrievalResult, fullAnswer.toString(), estimatedPromptTokens, estimatedAnswerTokens);
+                        }
                     });
 
             return Flux.concat(
@@ -228,6 +232,9 @@ public class DefaultRagQueryService implements RagQueryService {
                                 } catch (Exception e) {
                                     log.error("Async faithfulness verification failed for trace {}: {}", traceId, e.getMessage());
                                     return null;
+                                } finally {
+                                    int estimatedAnswerTokens = tokenCostEstimator.estimateTokens(fullAnswer.toString());
+                                    completeTrace(traceId, retrievalResult, fullAnswer.toString(), estimatedPromptTokens, estimatedAnswerTokens);
                                 }
                             }, applicationTaskExecutor)).filter(java.util.Objects::nonNull);
                         }
