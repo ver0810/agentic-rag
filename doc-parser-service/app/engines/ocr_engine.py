@@ -191,7 +191,8 @@ class OCR:
                 cropped = cv2.rotate(cropped, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
             return cropped
-        except Exception:
+        except Exception as e:
+            logger.exception(f"Failed to crop text region: {e}")
             return None
 
     def _rec_preprocess(self, image: np.ndarray) -> np.ndarray:

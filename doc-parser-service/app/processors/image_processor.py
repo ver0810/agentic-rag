@@ -91,9 +91,8 @@ class ImageProcessor(BaseParser):
                 order += 1
 
             # Sort by reading order (top to bottom, left to right)
-            segments.sort(key=lambda s: (
-                blocks[segments.index(s)].bbox.y0 if s.id in [b.id for b in blocks] else 0
-            ))
+            block_y_map = {b.id: b.bbox.y0 for b in blocks}
+            segments.sort(key=lambda s: block_y_map.get(s.id, 0))
             for i, seg in enumerate(segments):
                 segments[i] = seg.model_copy(update={"start_order": i, "end_order": i})
 

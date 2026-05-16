@@ -140,7 +140,16 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserEntity> impleme
             return false;
         }
         if (needsPasswordUpgrade(storedPassword)) {
-            return storedPassword.equals(rawPassword);
+            // Direct string comparison is vulnerable to timing attacks, but required for legacy passwords
+            // We use MessageDigest.isEqual for constant-time comparison
+            try {
+                return java.security.MessageDigest.isEqual(
+                    storedPassword.getBytes(java.nio.charset.StandardCharsets.UTF_8), 
+                    rawPassword.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                );
+            } catch (Exception e) {
+                return false;
+            }
         }
         return passwordEncoder.matches(rawPassword, storedPassword);
     }

@@ -1,5 +1,5 @@
-import shutil
 import tempfile
+import asyncio
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, UploadFile, HTTPException
@@ -29,7 +29,8 @@ async def parse_document(
         tmp_path = Path(tmp.name)
 
     try:
-        result = parser_factory.parse(tmp_path, strategy, language)
+        # Run sync parsing in threadpool to avoid blocking event loop
+        result = await asyncio.to_thread(parser_factory.parse, tmp_path, strategy, language)
         return result
     finally:
         tmp_path.unlink(missing_ok=True)
@@ -52,8 +53,14 @@ async def parse_document_async(
 
     task_id = task_manager.create_task()
     # fire and forget
-    import asyncio
-    asyncio.create_task(task_manager.run_parse(task_id, tmp_path, strategy, language))
+    
+    async def run_and_cleanup():
+        try:
+            await task_manager.run_parse(task_id, tmp_path, strategy, language)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+            
+    asyncio.create_task(run_and_cleanup())
 
     return AsyncTaskResponse(task_id=task_id, status="pending")
 

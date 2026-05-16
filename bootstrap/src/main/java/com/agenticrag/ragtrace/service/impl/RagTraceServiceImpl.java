@@ -126,7 +126,7 @@ public class RagTraceServiceImpl implements RagTraceService {
                         .eq(RagTraceRunEntity::getUserId, userId)
                         .eq(RagTraceRunEntity::getDeleted, 0)
                         .orderByDesc(RagTraceRunEntity::getCreateTime)
-                        .last("limit " + Math.max(1, Math.min(limit, 100))))
+                        .last(true, "limit " + Math.max(1, Math.min(limit, 100))))
                 .stream()
                 .map(run -> new RagTraceRunDTO(
                         run.getTraceId(),
